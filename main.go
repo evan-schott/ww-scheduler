@@ -16,11 +16,7 @@ import (
 	"go.uber.org/fx"
 )
 
-// 1. setting up ww node
-// 2. select channel hoster
-// UDP multicast on local loopback interface
-// libp2p handlers
-
+// Used for cli.App()
 var flags = []cli.Flag{
 	&cli.StringFlag{
 		Name:    "ns",
@@ -82,20 +78,27 @@ func run(c *cli.Context) error {
 }
 
 func bind(vat casm.Vat, n *server.Node) error {
-	var ch csp.Chan // set up channel here
-	vat.Export(chanCap, chanProvider{ch})
+	var ch csp.Chan                       // set up channel here
+	vat.Export(chanCap, chanProvider{ch}) // TODO: how exactly is this being exported, do we need to do anything else?
 
 	view := n.Cluster.View()
 	it, release := view.Iter(context.Background(), cluster.NewQuery(cluster.All()))
 	defer release()
 
-	for rec := it.Next(); rec != nil; rec = it.Next() {
+	// Print out peers in view
+	// TODO: How do we make sure that all of this code gets executed after other nodes are awake?
+	println(it.Seq)
+	for rec := it.Next(); rec != nil; rec = it.Next() { // TODO: Couldn't find any other peers when ran this before
 		fmt.Println(rec.Peer())
+		// TODO: choose lowest id peer as gateway (leader)
+		// Every node is creating channel/exporting it, so leader will already have one
 	}
 
-	// TODO: choose lowest id peer as gateway
+	// use: echo server (use example)
+	// send capability in channel
 
 	//
+
 	// conn, err := vat.Connect(context.Background(), addr, chanCap)
 	// if err != nil {
 	// 	return err
@@ -103,9 +106,11 @@ func bind(vat casm.Vat, n *server.Node) error {
 
 	// client := conn.Bootstrap(context.Background())
 	// ch := csp.Chan(client)
+
+	return nil
 }
 
-var chanCap = casm.BasicCap{"/lb/chan"}
+var chanCap = casm.BasicCap{"/lb/chan"} // Set the location of the channel
 
 type chanProvider struct{ csp.Chan }
 
