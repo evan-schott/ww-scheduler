@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	log2 "log"
 	"net/http"
 	"os"
 	"sort"
@@ -109,32 +108,19 @@ func runGateway(c *cli.Context, n *server.Node) error {
 	var ch csp.Chan                         // TODO:  csp.NewChan()
 	n.Vat.Export(chanCap, chanProvider{ch}) // TODO: Will this also be exported to peers we find in the future?
 
-	log2.Println("starting server, listening on port " + getServerPort())
+	logger.Info("starting server, listening on port " + getServerPort())
 
 	http.HandleFunc("/echo", EchoHandler)
 	http.HandleFunc("/slight-echo", SlightEchoHandler)
 
-	return http.ListenAndServe(":"+getServerPort(), nil) // Can test with: curl -X GET -H "Content-Type: application/json" -d '{"message": "Hello, World!"}' http://localhost:8080/slight-echo
-}
-
-// DefaultPort is the default port to use if once is not specified by the SERVER_PORT environment variable
-const DefaultPort = "8080"
-
-// From https://github.com/aautar/go-http-echo/blob/master/echo.go#L0-L20
-func getServerPort() string {
-	port := os.Getenv("SERVER_PORT")
-	if port != "" {
-		return port
-	}
-
-	return DefaultPort
+	return http.ListenAndServe(":8080", nil) // Can test with: curl -X GET -H "Content-Type: application/json" -d '{"message": "Hello, World!"}' http://localhost:8080/slight-echo
 }
 
 // EchoHandler echos back the request as a response
 // From https://github.com/aautar/go-http-echo/blob/master/echo.go#L21-L40
 func EchoHandler(writer http.ResponseWriter, request *http.Request) {
 
-	log2.Println("Echoing back request made to " + request.URL.Path + " to client (" + request.RemoteAddr + ")")
+	logger.Info("Echoing back request made to " + request.URL.Path + " to client (" + request.RemoteAddr + ")")
 
 	writer.Header().Set("Access-Control-Allow-Origin", "*")
 
@@ -145,7 +131,7 @@ func EchoHandler(writer http.ResponseWriter, request *http.Request) {
 }
 
 func SlightEchoHandler(writer http.ResponseWriter, request *http.Request) {
-	log2.Println("Slightly echoing back request made to " + request.URL.Path + " to client (" + request.RemoteAddr + ")")
+	logger.Info("Slightly echoing back request made to " + request.URL.Path + " to client (" + request.RemoteAddr + ")")
 
 	writer.Header().Set("Access-Control-Allow-Origin", "*")
 	writer.Header().Set("Access-Control-Allow-Headers", "Content-Range, Content-Disposition, Content-Type, ETag")
@@ -193,8 +179,6 @@ func waitPeers(c *cli.Context, n *server.Node) (bool, error) {
 	for len(ps) < cap(ps) {
 		it, release := n.View().Iter(ctx, queryAll())
 		defer release()
-
-		counter := 0
 		for r := it.Next(); r != nil; r = it.Next() {
 			counter += 1
 			ps = append(ps, r.Peer())
