@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	log2 "log"
+	"net/http"
 	"os"
 	"sort"
 	"time"
@@ -78,7 +81,7 @@ func main() {
 }
 
 func run(c *cli.Context) error {
-	// TODO: what do we add to have something to constantly handle requests from clients?
+
 	app := fx.New(runtime.NewServer(c.Context, c),
 		fx.Populate(&logger, &n),
 		fx.Supply(c))
@@ -106,11 +109,75 @@ func runGateway(c *cli.Context, n *server.Node) error {
 	var ch csp.Chan                         // TODO:  csp.NewChan()
 	n.Vat.Export(chanCap, chanProvider{ch}) // TODO: Will this also be exported to peers we find in the future?
 
-	return errors.New("NOT IMPLEMENTED")
+	log2.Println("starting server, listening on port " + getServerPort())
+
+	http.HandleFunc("/echo", EchoHandler)
+	http.HandleFunc("/slight-echo", SlightEchoHandler)
+
+	return http.ListenAndServe(":"+getServerPort(), nil) // Can test with: curl -X GET -H "Content-Type: application/json" -d '{"message": "Hello, World!"}' http://localhost:8080/slight-echo
+}
+
+// DefaultPort is the default port to use if once is not specified by the SERVER_PORT environment variable
+const DefaultPort = "8080"
+
+// From https://github.com/aautar/go-http-echo/blob/master/echo.go#L0-L20
+func getServerPort() string {
+	port := os.Getenv("SERVER_PORT")
+	if port != "" {
+		return port
+	}
+
+	return DefaultPort
+}
+
+// EchoHandler echos back the request as a response
+// From https://github.com/aautar/go-http-echo/blob/master/echo.go#L21-L40
+func EchoHandler(writer http.ResponseWriter, request *http.Request) {
+
+	log2.Println("Echoing back request made to " + request.URL.Path + " to client (" + request.RemoteAddr + ")")
+
+	writer.Header().Set("Access-Control-Allow-Origin", "*")
+
+	// allow pre-flight headers
+	writer.Header().Set("Access-Control-Allow-Headers", "Content-Range, Content-Disposition, Content-Type, ETag")
+
+	request.Write(writer)
+}
+
+func SlightEchoHandler(writer http.ResponseWriter, request *http.Request) {
+	log2.Println("Slightly echoing back request made to " + request.URL.Path + " to client (" + request.RemoteAddr + ")")
+
+	writer.Header().Set("Access-Control-Allow-Origin", "*")
+	writer.Header().Set("Access-Control-Allow-Headers", "Content-Range, Content-Disposition, Content-Type, ETag")
+
+	var payload map[string]interface{}
+
+	err := json.NewDecoder(request.Body).Decode(&payload)
+	if err != nil {
+		http.Error(writer, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if msg, ok := payload["message"].(string); ok {
+		payload["message"] = msg + " You have been echoed!"
+	} else {
+		http.Error(writer, "message field not found or not a string", http.StatusBadRequest)
+		return
+	}
+
+	responsePayload, err := json.Marshal(payload)
+	if err != nil {
+		http.Error(writer, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writer.Header().Set("Content-Type", "application/json")
+	writer.Write(responsePayload)
 }
 
 func runWorker(c *cli.Context, n *server.Node) error {
-	return errors.New("NOT IMPLEMENTED")
+	time.Sleep(10 * time.Second)
+	return errors.New("WORKER NOT IMPLEMENTED")
 }
 
 func waitPeers(c *cli.Context, n *server.Node) (bool, error) {
@@ -127,7 +194,9 @@ func waitPeers(c *cli.Context, n *server.Node) (bool, error) {
 		it, release := n.View().Iter(ctx, queryAll())
 		defer release()
 
+		counter := 0
 		for r := it.Next(); r != nil; r = it.Next() {
+			counter += 1
 			ps = append(ps, r.Peer())
 		}
 
@@ -169,18 +238,3 @@ func (cp chanProvider) Client() capnp.Client {
 func queryAll() cluster.Query {
 	return cluster.NewQuery(cluster.All())
 }
-
-// casm ~ vat (layer of abstraction on top of libp2p) => so capnp capabilities on libp2p (vs raw libp2p streams)
-
-// TODO LIST:
-// 1. have peers determine gateway (impl: tail end of peerID random, take last byte to determine),
-// 2. make gateway start http server
-// 3. setup endpoint that receives payload and echos it back
-// 4. make sure can work with curl
-// 5. make gateway peer create/export channel
-// 6. all workers connect and get channel
-// 7. make all workers create echo server (don't export)
-// [8]. have workers in infinite loop try to send capability to channel
-// [9]. make gateway http handler for each incoming request recv from channel (echo cap), call echo, return result (after handled by worker)
-
-// turn capability into pointer
