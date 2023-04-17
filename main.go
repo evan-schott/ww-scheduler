@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"os"
+	"sort"
 	"time"
 
 	"capnproto.org/go/capnp/v3"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/lthibault/log"
 	"github.com/urfave/cli/v2"
 	casm "github.com/wetware/casm/pkg"
@@ -52,11 +54,17 @@ var flags = []cli.Flag{
 		Usage:   "metadata fields in key=value format",
 		EnvVars: []string{"WW_META"},
 	},
-	&cli.StringFlag{
-		Name:  "gateway",
-		Usage: "multiaddr of gateway peer",
+	&cli.IntFlag{
+		Name:  "num-peers",
+		Usage: "number of expected peers in the cluster",
+		Value: 2,
 	},
 }
+
+var (
+	logger log.Logger
+	n      *server.Node
+)
 
 func main() {
 	app := &cli.App{
@@ -65,90 +73,90 @@ func main() {
 	}
 
 	if err := app.Run(os.Args); err != nil {
-		log.Fatal(err)
+		logger.Fatal(err)
 	}
 }
 
 func run(c *cli.Context) error {
 	// TODO: what do we add to have something to constantly handle requests from clients?
 	app := fx.New(runtime.NewServer(c.Context, c),
-		fx.Supply(c),
-		fx.Invoke(bind))
+		fx.Populate(&logger, &n),
+		fx.Supply(c))
 
 	if err := app.Start(c.Context); err != nil {
 		return err
 	}
+	defer app.Stop(context.Background())
 
-	log.Info("we're up!")
-	<-app.Done()
+	logger.Info("server started")
 
-	return app.Stop(context.Background())
-}
-
-func bind(c *cli.Context, vat casm.Vat, n *server.Node) error {
-	if c.IsSet("gateway") {
-		// it's a worker peer - get its address, connnect and grab the channel
-	} else {
-		// it's the gateway peer
+	gateway, err := waitPeers(c, n)
+	if err != nil {
+		return err
 	}
 
-	var ch csp.Chan
-	vat.Export(chanCap, chanProvider{ch}) // TODO: Will this also be exported to peers we find in the future?
+	if gateway {
+		return runGateway(c, n)
+	}
 
-	time.Sleep(10 * time.Second) // Give time for everyone else to start up
+	return runWorker(c, n)
+}
 
-	n.Bootstrap(c.Context)
+func runGateway(c *cli.Context, n *server.Node) error {
+	var ch csp.Chan                         // TODO:  csp.NewChan()
+	n.Vat.Export(chanCap, chanProvider{ch}) // TODO: Will this also be exported to peers we find in the future?
 
-	view := n.Cluster.View()
-	it, release := view.Iter(context.Background(), cluster.NewQuery(cluster.All()))
-	defer release()
-	n.Bootstrap(c.Context)
-	fmt.Println("woke up")
-	fmt.Println("my id:", vat.Host.ID())
+	return errors.New("NOT IMPLEMENTED")
+}
 
-	min := vat.Host.ID()                                // If we take just last byte then isn't there big chance we tie?
-	for rec := it.Next(); rec != nil; rec = it.Next() { // TODO: Couldn't find any other peers when ran this before
+func runWorker(c *cli.Context, n *server.Node) error {
+	return errors.New("NOT IMPLEMENTED")
+}
 
-		fmt.Println("Found peer:", rec.Peer())
-		if rec.Peer() < min {
-			min = rec.Peer()
+func waitPeers(c *cli.Context, n *server.Node) (bool, error) {
+	ctx, cancel := context.WithTimeout(c.Context, time.Second*10)
+	defer cancel()
+
+	ps := make(peerSlice, 0, c.Int("num-peers"))
+
+	log := logger.With(n).
+		WithField("n_peers", cap(ps))
+	log.Info("waiting for peers")
+
+	for len(ps) < cap(ps) {
+		it, release := n.View().Iter(ctx, queryAll())
+		defer release()
+
+		for r := it.Next(); r != nil; r = it.Next() {
+			ps = append(ps, r.Peer())
 		}
+
+		if err := it.Err(); err != nil {
+			return false, err
+		}
+
+		// did we find everyone?
+		if len(ps) < cap(ps) {
+			logger.Infof("found %d peers", len(ps))
+			release()
+			ps = ps[:0] // reset length to 0
+			time.Sleep(time.Millisecond * 100)
+			continue
+		}
+
+		logger.With(n).Info("found all peers")
+		break
 	}
-	if it.Err() != nil {
-		return it.Err()
-	}
-	fmt.Println("lowest peer is:", min)
 
-	if min == vat.Host.ID() { // Case we are gateway
-		// now we gotta actually set up a channel on our end
-		// csp.NewChan() // Confused why peekable chan is loading but not NewChan(), something to do with how set up go
-
-	}
-	// else { // Case we are worker
-	// 	server := echo.EchoServer{}
-	// 	client := echo.Echo_ServerToClient(server)
-
-	// 	// how access leader chan (given we know address for it is gatewayID/lb/chan)
-
-	// 	// do we need all that rpc stuff or is there other way?
-	// 	// Use vat.Connect(ctx, min, )?
-
-	// }
-
-	// TODO: Case where we are the leader
-	// send capability of channel?
-	// wait for requests + respond with popping from channel
-
-	// conn, err := vat.Connect(context.Background(), addr, chanCap)
-	// if err != nil {
-	// 	return err
-	// }
-
-	// client := conn.Bootstrap(context.Background())
-	// ch := csp.Chan(client)
-
-	return nil
+	sort.Sort(ps)
+	return n.Vat.Host.ID() == ps[0], nil
 }
+
+type peerSlice []peer.ID
+
+func (ps peerSlice) Len() int           { return len(ps) }
+func (ps peerSlice) Less(i, j int) bool { return ps[i] < ps[j] }
+func (ps peerSlice) Swap(i, j int)      { ps[i], ps[j] = ps[j], ps[i] }
 
 var chanCap = casm.BasicCap{"/lb/chan"} // Set the location of the channel
 
@@ -158,15 +166,9 @@ func (cp chanProvider) Client() capnp.Client {
 	return capnp.Client(cp.Chan)
 }
 
-func selectAll() cluster.Query {
-	return cluster.NewQuery(cluster.Match(matchAll{}))
+func queryAll() cluster.Query {
+	return cluster.NewQuery(cluster.All())
 }
-
-type matchAll struct{}
-
-func (matchAll) String() string { return "host" }
-func (matchAll) Prefix() bool   { return true }
-func (matchAll) Host() string   { return "/" }
 
 // casm ~ vat (layer of abstraction on top of libp2p) => so capnp capabilities on libp2p (vs raw libp2p streams)
 
