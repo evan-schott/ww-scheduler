@@ -108,7 +108,7 @@ func runGateway(c *cli.Context, n *server.Node) error {
 	var ch csp.Chan                         // TODO:  csp.NewChan()
 	n.Vat.Export(chanCap, chanProvider{ch}) // TODO: Will this also be exported to peers we find in the future?
 
-	logger.Info("starting server, listening on port " + getServerPort())
+	logger.Info("starting server, listening on port :8080")
 
 	http.HandleFunc("/echo", EchoHandler)
 	http.HandleFunc("/slight-echo", SlightEchoHandler)
@@ -122,21 +122,20 @@ func EchoHandler(writer http.ResponseWriter, request *http.Request) {
 
 	logger.Info("Echoing back request made to " + request.URL.Path + " to client (" + request.RemoteAddr + ")")
 
-	writer.Header().Set("Access-Control-Allow-Origin", "*")
-
 	// allow pre-flight headers
 	writer.Header().Set("Access-Control-Allow-Headers", "Content-Range, Content-Disposition, Content-Type, ETag")
 
 	request.Write(writer)
 }
 
+type Payload struct {
+	Message string `json:"message"`
+}
+
 func SlightEchoHandler(writer http.ResponseWriter, request *http.Request) {
-	logger.Info("Slightly echoing back request made to " + request.URL.Path + " to client (" + request.RemoteAddr + ")")
+	log.Info("Slightly echoing back request made to " + request.URL.Path + " to client (" + request.RemoteAddr + ")")
 
-	writer.Header().Set("Access-Control-Allow-Origin", "*")
-	writer.Header().Set("Access-Control-Allow-Headers", "Content-Range, Content-Disposition, Content-Type, ETag")
-
-	var payload map[string]interface{}
+	var payload Payload
 
 	err := json.NewDecoder(request.Body).Decode(&payload)
 	if err != nil {
@@ -144,12 +143,12 @@ func SlightEchoHandler(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	if msg, ok := payload["message"].(string); ok {
-		payload["message"] = msg + " You have been echoed!"
-	} else {
+	if payload.Message == "" {
 		http.Error(writer, "message field not found or not a string", http.StatusBadRequest)
 		return
 	}
+
+	payload.Message = payload.Message + " You have been echoed!"
 
 	responsePayload, err := json.Marshal(payload)
 	if err != nil {
@@ -180,7 +179,6 @@ func waitPeers(c *cli.Context, n *server.Node) (bool, error) {
 		it, release := n.View().Iter(ctx, queryAll())
 		defer release()
 		for r := it.Next(); r != nil; r = it.Next() {
-			counter += 1
 			ps = append(ps, r.Peer())
 		}
 
