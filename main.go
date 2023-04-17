@@ -90,15 +90,19 @@ func run(c *cli.Context) error {
 
 	logger.Info("server started")
 
+	// wait until all peers have joined the cluster, so that we
+	// can check to see who the gateway is.
 	gateway, err := waitPeers(c, n)
 	if err != nil {
 		return err
 	}
 
+	// are we the gateway peer?
 	if gateway {
 		return runGateway(c, n)
 	}
 
+	// if not, then we're a worker.
 	return runWorker(c, n)
 }
 
