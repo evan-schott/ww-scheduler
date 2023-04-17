@@ -97,9 +97,12 @@ func bind(c *cli.Context, vat casm.Vat, n *server.Node) error {
 
 	time.Sleep(10 * time.Second) // Give time for everyone else to start up
 
+	n.Bootstrap(c.Context)
+
 	view := n.Cluster.View()
-	it, release := view.Iter(context.Background(), selectAll())
+	it, release := view.Iter(context.Background(), cluster.NewQuery(cluster.All()))
 	defer release()
+	n.Bootstrap(c.Context)
 	fmt.Println("woke up")
 	fmt.Println("my id:", vat.Host.ID())
 
