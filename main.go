@@ -97,16 +97,16 @@ func run(c *cli.Context) error {
 		return err
 	}
 
-	if gateway {
+	if gateway == n.Vat.Host.ID() {
 		return runGateway(c, n)
 	}
 
-	return runWorker(c, n)
+	return runWorker(c, n, gateway)
 }
 
 func runGateway(c *cli.Context, n *server.Node) error {
-	var ch csp.Chan                         // TODO:  csp.NewChan()
-	n.Vat.Export(chanCap, chanProvider{ch}) // TODO: Will this also be exported to peers we find in the future?
+	var ch = csp.NewChan(&csp.SyncChan{})
+	n.Vat.Export(chanCap, chanProvider{ch}) // Sets location to "/lb/chan"
 
 	logger.Info("starting server, listening on port :8080")
 
@@ -160,12 +160,20 @@ func SlightEchoHandler(writer http.ResponseWriter, request *http.Request) {
 	writer.Write(responsePayload)
 }
 
-func runWorker(c *cli.Context, n *server.Node) error {
+func runWorker(c *cli.Context, n *server.Node, g peer.ID) error { // TODO: Is there a reason all these have just c,n as arguments?
 	time.Sleep(10 * time.Second)
+	var f, release = n.Cluster.View().Lookup(c.Context) // TODO: Submit a query for ("gatewayID/lb/chan")?
+	defer release()
+	var record, err = f.Await(c.Context) // Confused because record is wrong type, so how get chan capability from record?
+	if err == nil {
+		return err
+	}
+	n.Vat.Connect(c.Context, g)
+
 	return errors.New("WORKER NOT IMPLEMENTED")
 }
 
-func waitPeers(c *cli.Context, n *server.Node) (bool, error) {
+func waitPeers(c *cli.Context, n *server.Node) (peer.ID, error) {
 	ctx, cancel := context.WithTimeout(c.Context, time.Second*10)
 	defer cancel()
 
@@ -183,7 +191,7 @@ func waitPeers(c *cli.Context, n *server.Node) (bool, error) {
 		}
 
 		if err := it.Err(); err != nil {
-			return false, err
+			return peer.ID(""), err
 		}
 
 		// did we find everyone?
@@ -200,7 +208,7 @@ func waitPeers(c *cli.Context, n *server.Node) (bool, error) {
 	}
 
 	sort.Sort(ps)
-	return n.Vat.Host.ID() == ps[0], nil
+	return ps[0], nil
 }
 
 type peerSlice []peer.ID
