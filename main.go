@@ -61,11 +61,11 @@ var flags = []cli.Flag{
 		Usage: "number of expected peers in the cluster",
 		Value: 2,
 	},
-	&cli.IntFlag{ // TODO: Probably remove this once done debugging
-		Name:  "role",
-		Usage: "0 for gateway, 1 for worker (helpful for debugging)",
-		Value: 1,
-	},
+	// &cli.IntFlag{ // TODO: Probably remove this once done debugging
+	// 	Name:  "role",
+	// 	Usage: "0 for gateway, 1 for worker (helpful for debugging)",
+	// 	Value: 1,
+	// },
 }
 
 var (
@@ -109,14 +109,14 @@ func run(c *cli.Context) error {
 	}
 
 	// TODO: remove when done debugging
-	if c.Int("role") == 0 {
-		return runGateway(c, n)
-	}
-
-	// TODO: add back when done debugging
-	// if gateway == n.Vat.Host.ID() {
+	// if c.Int("role") == 0 {
 	// 	return runGateway(c, n)
 	// }
+
+	// TODO: add back when done debugging
+	if gateway == n.Vat.Host.ID() {
+		return runGateway(c, n)
+	}
 
 	return runWorker(c, n, gateway)
 }
@@ -125,12 +125,24 @@ func runGateway(c *cli.Context, n *server.Node) error {
 	var ch = csp.NewChan(&csp.SyncChan{})
 	n.Vat.Export(chanCap, chanProvider{ch}) // Sets location to "/lb/chan"
 
-	logger.Info("starting server, listening on port :8080")
+	f, release := ch.Recv(context.Background())
+	defer release()
+	got, err := f.Text()
 
-	http.HandleFunc("/echo", EchoHandler)
-	http.HandleFunc("/slight-echo", SlightEchoHandler)
+	if err != nil {
+		return err
+	}
+	logger.Info("We have received value: " + got + " from the channel!")
 
-	return http.ListenAndServe(":8080", nil) // Can test with: curl -X GET -H "Content-Type: application/json" -d '{"message": "Hello, World!"}' http://localhost:8080/slight-echo
+	// TODO: Uncomment later when want to add in http server functionality
+	// logger.Info("starting server, listening on port :8080")
+
+	// http.HandleFunc("/echo", EchoHandler)
+	// http.HandleFunc("/slight-echo", SlightEchoHandler)
+
+	//return http.ListenAndServe(":8080", nil) // Can test with: curl -X GET -H "Content-Type: application/json" -d '{"message": "Hello, World!"}' http://localhost:8080/slight-echo
+	time.Sleep(10 * time.Second)
+	return nil
 }
 
 // EchoHandler echos back the request as a response
@@ -184,11 +196,23 @@ func runWorker(c *cli.Context, n *server.Node, g peer.ID) error {
 
 	conn, err := n.Vat.Connect(c.Context, peer.AddrInfo{ID: g}, casm.BasicCap{"lb/chan", "lb/chan/packed"})
 
-	if err == nil {
+	if err != nil {
 		return err
 	}
 	defer conn.Close()
 
+	// Keep sending forever. Will block for each a.Send() I think?
+
+	a := csp.Chan(conn.Bootstrap(c.Context)) // TODO: give this guy more informative name
+	msg := "hello, from " + n.Vat.Host.ID()
+	logger.Info("Putting msg: " + msg + " into the channel!")
+	err = a.Send(context.Background(), csp.Text(msg)) // TODO: `func(ps echo.Echo_send_Params` formatting for when want multiple params?
+
+	if err != nil {
+		return err
+	}
+	logger.Info("Msg success")
+	time.Sleep(10 * time.Second)
 	return nil
 }
 
