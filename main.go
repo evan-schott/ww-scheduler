@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"sort"
@@ -61,6 +61,11 @@ var flags = []cli.Flag{
 		Usage: "number of expected peers in the cluster",
 		Value: 2,
 	},
+	&cli.IntFlag{ // TODO: Probably remove this once done debugging
+		Name:  "role",
+		Usage: "0 for gateway, 1 for worker (helpful for debugging)",
+		Value: 1,
+	},
 }
 
 var (
@@ -69,14 +74,19 @@ var (
 )
 
 func main() {
-	app := &cli.App{
-		Action: run,
-		Flags:  flags,
-	}
+	app := createApp()
 
 	if err := app.Run(os.Args); err != nil {
 		logger.Fatal(err)
 	}
+}
+
+func createApp() *cli.App {
+	app := &cli.App{
+		Action: run,
+		Flags:  flags,
+	}
+	return app
 }
 
 func run(c *cli.Context) error {
@@ -93,20 +103,27 @@ func run(c *cli.Context) error {
 	logger.Info("server started")
 
 	gateway, err := waitPeers(c, n)
+
 	if err != nil {
 		return err
 	}
 
-	if gateway {
+	// TODO: remove when done debugging
+	if c.Int("role") == 0 {
 		return runGateway(c, n)
 	}
 
-	return runWorker(c, n)
+	// TODO: add back when done debugging
+	// if gateway == n.Vat.Host.ID() {
+	// 	return runGateway(c, n)
+	// }
+
+	return runWorker(c, n, gateway)
 }
 
 func runGateway(c *cli.Context, n *server.Node) error {
-	var ch csp.Chan                         // TODO:  csp.NewChan()
-	n.Vat.Export(chanCap, chanProvider{ch}) // TODO: Will this also be exported to peers we find in the future?
+	var ch = csp.NewChan(&csp.SyncChan{})
+	n.Vat.Export(chanCap, chanProvider{ch}) // Sets location to "/lb/chan"
 
 	logger.Info("starting server, listening on port :8080")
 
@@ -160,13 +177,23 @@ func SlightEchoHandler(writer http.ResponseWriter, request *http.Request) {
 	writer.Write(responsePayload)
 }
 
-func runWorker(c *cli.Context, n *server.Node) error {
-	time.Sleep(10 * time.Second)
-	return errors.New("WORKER NOT IMPLEMENTED")
+func runWorker(c *cli.Context, n *server.Node, g peer.ID) error {
+	fmt.Println("Sleeping before run worker...")
+	time.Sleep(5 * time.Second)
+	fmt.Println("Running worker...")
+
+	conn, err := n.Vat.Connect(c.Context, peer.AddrInfo{ID: g}, casm.BasicCap{"lb/chan", "lb/chan/packed"})
+
+	if err == nil {
+		return err
+	}
+	defer conn.Close()
+
+	return nil
 }
 
-func waitPeers(c *cli.Context, n *server.Node) (bool, error) {
-	ctx, cancel := context.WithTimeout(c.Context, time.Second*10)
+func waitPeers(c *cli.Context, n *server.Node) (peer.ID, error) {
+	ctx, cancel := context.WithTimeout(c.Context, time.Second*20)
 	defer cancel()
 
 	ps := make(peerSlice, 0, c.Int("num-peers"))
@@ -183,7 +210,7 @@ func waitPeers(c *cli.Context, n *server.Node) (bool, error) {
 		}
 
 		if err := it.Err(); err != nil {
-			return false, err
+			return peer.ID(""), err
 		}
 
 		// did we find everyone?
@@ -200,7 +227,7 @@ func waitPeers(c *cli.Context, n *server.Node) (bool, error) {
 	}
 
 	sort.Sort(ps)
-	return n.Vat.Host.ID() == ps[0], nil
+	return ps[0], nil
 }
 
 type peerSlice []peer.ID
