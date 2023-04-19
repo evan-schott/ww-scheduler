@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"sort"
@@ -61,6 +61,11 @@ var flags = []cli.Flag{
 		Usage: "number of expected peers in the cluster",
 		Value: 2,
 	},
+	&cli.IntFlag{ // TODO: Probably remove this once done debugging
+		Name:  "role",
+		Usage: "0 for gateway, 1 for worker (helpful for debugging)",
+		Value: 1,
+	},
 }
 
 var (
@@ -69,14 +74,19 @@ var (
 )
 
 func main() {
-	app := &cli.App{
-		Action: run,
-		Flags:  flags,
-	}
+	app := createApp()
 
 	if err := app.Run(os.Args); err != nil {
 		logger.Fatal(err)
 	}
+}
+
+func createApp() *cli.App {
+	app := &cli.App{
+		Action: run,
+		Flags:  flags,
+	}
+	return app
 }
 
 func run(c *cli.Context) error {
@@ -93,13 +103,20 @@ func run(c *cli.Context) error {
 	logger.Info("server started")
 
 	gateway, err := waitPeers(c, n)
+
 	if err != nil {
 		return err
 	}
 
-	if gateway == n.Vat.Host.ID() {
+	// TODO: remove when done debugging
+	if c.Int("role") == 0 {
 		return runGateway(c, n)
 	}
+
+	// TODO: add back when done debugging
+	// if gateway == n.Vat.Host.ID() {
+	// 	return runGateway(c, n)
+	// }
 
 	return runWorker(c, n, gateway)
 }
@@ -160,21 +177,23 @@ func SlightEchoHandler(writer http.ResponseWriter, request *http.Request) {
 	writer.Write(responsePayload)
 }
 
-func runWorker(c *cli.Context, n *server.Node, g peer.ID) error { // TODO: Is there a reason all these have just c,n as arguments?
-	time.Sleep(10 * time.Second)
-	var f, release = n.Cluster.View().Lookup(c.Context) // TODO: Submit a query for ("gatewayID/lb/chan")?
-	defer release()
-	var record, err = f.Await(c.Context) // Confused because record is wrong type, so how get chan capability from record?
+func runWorker(c *cli.Context, n *server.Node, g peer.ID) error {
+	fmt.Println("Sleeping before run worker...")
+	time.Sleep(5 * time.Second)
+	fmt.Println("Running worker...")
+
+	conn, err := n.Vat.Connect(c.Context, peer.AddrInfo{ID: g}, casm.BasicCap{"lb/chan", "lb/chan/packed"})
+
 	if err == nil {
 		return err
 	}
-	n.Vat.Connect(c.Context, g)
+	defer conn.Close()
 
-	return errors.New("WORKER NOT IMPLEMENTED")
+	return nil
 }
 
 func waitPeers(c *cli.Context, n *server.Node) (peer.ID, error) {
-	ctx, cancel := context.WithTimeout(c.Context, time.Second*10)
+	ctx, cancel := context.WithTimeout(c.Context, time.Second*20)
 	defer cancel()
 
 	ps := make(peerSlice, 0, c.Int("num-peers"))
