@@ -122,18 +122,36 @@ func run(c *cli.Context) error {
 }
 
 func runGateway(c *cli.Context, n *server.Node) error {
+	fmt.Println("Gateway booting up...")
+	time.Sleep(5 * time.Second)
+	fmt.Println("Running Gateway...")
+
 	var ch = csp.NewChan(&csp.SyncChan{})
 	n.Vat.Export(chanCap, chanProvider{ch}) // Sets location to "/lb/chan"
 
-	f, release := ch.Recv(context.Background())
-	defer release()
-	got, err := f.Text()
+	var err error
+	for err == nil {
+		f, release := ch.Recv(context.Background())
+		defer release()
 
-	if err != nil {
-		return err
+		// TODO: uncomment to go from: Ptr => Client
+		// ptr, err := f.Ptr()
+		// if err != nil {
+		// 	return err
+		// }
+		// client := ptr.Interface().Client()
+		// a := handler.Handler(client)
+		// val := // TODO: Go from http request => Value
+		// a.Handle(context.Background(), val)
+
+		got, err := f.Text()
+
+		if err != nil {
+			return err
+		}
+		logger.Info("We have received value: " + got + " from the channel!")
+		time.Sleep(time.Second)
 	}
-	logger.Info("We have received value: " + got + " from the channel!")
-
 	// TODO: Uncomment later when want to add in http server functionality
 	// logger.Info("starting server, listening on port :8080")
 
@@ -141,8 +159,8 @@ func runGateway(c *cli.Context, n *server.Node) error {
 	// http.HandleFunc("/slight-echo", SlightEchoHandler)
 
 	//return http.ListenAndServe(":8080", nil) // Can test with: curl -X GET -H "Content-Type: application/json" -d '{"message": "Hello, World!"}' http://localhost:8080/slight-echo
-	time.Sleep(10 * time.Second)
-	return nil
+	// time.Sleep(10 * time.Second)
+	return err
 }
 
 // EchoHandler echos back the request as a response
@@ -190,10 +208,11 @@ func SlightEchoHandler(writer http.ResponseWriter, request *http.Request) {
 }
 
 func runWorker(c *cli.Context, n *server.Node, g peer.ID) error {
-	fmt.Println("Sleeping before run worker...")
-	time.Sleep(5 * time.Second)
+	fmt.Println("Worker booting up...")
+	time.Sleep(10 * time.Second)
 	fmt.Println("Running worker...")
 
+	// Establish connection with gateway (corresponding to channel capability that gateway exported earlier)
 	conn, err := n.Vat.Connect(c.Context, peer.AddrInfo{ID: g}, casm.BasicCap{"lb/chan", "lb/chan/packed"})
 
 	if err != nil {
@@ -201,19 +220,23 @@ func runWorker(c *cli.Context, n *server.Node, g peer.ID) error {
 	}
 	defer conn.Close()
 
-	// Keep sending forever. Will block for each a.Send() I think?
+	// Recover channel capability from Gateway
+	a := csp.Chan(conn.Bootstrap(c.Context))
 
-	a := csp.Chan(conn.Bootstrap(c.Context)) // TODO: give this guy more informative name
-	msg := "hello, from " + n.Vat.Host.ID()
-	logger.Info("Putting msg: " + msg + " into the channel!")
-	err = a.Send(context.Background(), csp.Text(msg)) // TODO: `func(ps echo.Echo_send_Params` formatting for when want multiple params?
+	// Busy loop sending request handler capabilities
+	for err == nil {
+		msg := "hello, from " + n.Vat.Host.ID()
+		logger.Info("Putting msg: " + msg + " into the channel!")
+		err = a.Send(context.Background(), csp.Text(msg)) // TODO: `func(ps echo.Echo_send_Params` formatting for when want multiple params?
 
-	if err != nil {
-		return err
+		if err != nil {
+			return err
+		}
+		logger.Info("Msg success")
+		time.Sleep(time.Second)
 	}
-	logger.Info("Msg success")
-	time.Sleep(10 * time.Second)
-	return nil
+
+	return err
 }
 
 func waitPeers(c *cli.Context, n *server.Node) (peer.ID, error) {
