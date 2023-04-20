@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"capnproto.org/go/capnp/v3"
@@ -60,7 +62,7 @@ var flags = []cli.Flag{
 	&cli.IntFlag{
 		Name:  "num-peers",
 		Usage: "number of expected peers in the cluster",
-		Value: 2,
+		Value: 10,
 	},
 	// &cli.IntFlag{ // TODO: Probably remove this once done debugging
 	// 	Name:  "role",
@@ -123,7 +125,10 @@ func run(c *cli.Context) error {
 }
 
 type Payload struct {
-	Message string `json:"message"`
+	Message string            `json:"message"`
+	Status  int               `json:"status"`
+	Headers map[string]string `json:"headers"`
+	Body    string            `json:"body"`
 }
 
 func gatewayHandler(ch csp.Chan, c *cli.Context, n *server.Node, writer http.ResponseWriter, request *http.Request) {
@@ -166,6 +171,20 @@ func gatewayHandler(ch csp.Chan, c *cli.Context, n *server.Node, writer http.Res
 	resp, err := res.Response()
 	fmt.Println("Received response: " + resp)
 	payload.Message = resp
+
+	// Add some more parts
+	bodyBytes, err := ioutil.ReadAll(request.Body)
+	if err != nil {
+		http.Error(writer, err.Error(), http.StatusBadRequest)
+		return
+	}
+	payload.Status = http.StatusOK
+	payload.Headers = make(map[string]string)
+	for key, values := range request.Header {
+		payload.Headers[key] = strings.Join(values, ",")
+	}
+	payload.Body = string(bodyBytes)
+
 	responsePayload, err := json.Marshal(payload)
 
 	writer.Header().Set("Content-Type", "application/json")
@@ -178,9 +197,8 @@ func gatewayHandlerWrapper(ch csp.Chan, c *cli.Context, n *server.Node) func(htt
 	}
 }
 
+// curl -X POST -H "Content-Type: application/json" -d '{"message": "Hello, world!"}' http://localhost:8080/echo
 func runGateway(c *cli.Context, n *server.Node) error {
-	fmt.Println("Gateway booting up...")
-	time.Sleep(5 * time.Second)
 	fmt.Println("Running Gateway...")
 
 	var ch = csp.NewChan(&csp.SyncChan{})
@@ -193,7 +211,7 @@ func runGateway(c *cli.Context, n *server.Node) error {
 
 func runWorker(c *cli.Context, n *server.Node, g peer.ID) error {
 	fmt.Println("Worker booting up...")
-	time.Sleep(10 * time.Second)
+	time.Sleep(20 * time.Second)
 	fmt.Println("Running worker...")
 
 	// Establish connection with gateway (corresponding to channel capability that gateway exported earlier)
@@ -232,7 +250,7 @@ func runWorker(c *cli.Context, n *server.Node, g peer.ID) error {
 }
 
 func waitPeers(c *cli.Context, n *server.Node) (peer.ID, error) {
-	ctx, cancel := context.WithTimeout(c.Context, time.Second*20)
+	ctx, cancel := context.WithTimeout(c.Context, time.Second*30)
 	defer cancel()
 
 	ps := make(peerSlice, 0, c.Int("num-peers"))
