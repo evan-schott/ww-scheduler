@@ -2,7 +2,6 @@ package handler
 
 import (
 	context "context"
-	"fmt"
 )
 
 // HandlerServer satisfies the Handler_Server interface that was generated
@@ -28,8 +27,8 @@ func (HandlerServer) Handle(ctx context.Context, call Handler_handle) error {
 	// TODO: could get fancy here and implement more fancy logic on entire request
 	req, _ := call.Args().Request()
 	modified := req + " You have been echoed by worker!"
-	fmt.Println("Recvd: " + req)
-	fmt.Println("Returning: " + modified)
+	logger.Info("Recvd: " + req)
+	logger.Info("Returning: " + modified)
 
 	res.SetResponse(modified)
 	return nil

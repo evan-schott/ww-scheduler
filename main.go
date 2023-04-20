@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"capnproto.org/go/capnp/v3"
+	"github.com/evan-schott/ww-load-balancer/handler"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/lthibault/log"
 	"github.com/urfave/cli/v2"
@@ -121,6 +122,62 @@ func run(c *cli.Context) error {
 	return runWorker(c, n, gateway)
 }
 
+type Payload struct {
+	Message string `json:"message"`
+}
+
+func gatewayHandler(ch csp.Chan, c *cli.Context, n *server.Node, writer http.ResponseWriter, request *http.Request) {
+
+	// Receive value from synchronous channel
+	f, r := ch.Recv(context.Background())
+	defer r()
+
+	// Turn received value into pointer
+	ptr, err := f.Ptr()
+	if err != nil {
+		panic(err)
+	}
+
+	// Recover capability from client
+	a := handler.Handler(ptr.Interface().Client())
+
+	// Decode object
+	var payload Payload
+	err = json.NewDecoder(request.Body).Decode(&payload)
+	if err != nil {
+		http.Error(writer, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Call capability with <request body>
+	future, release := a.Handle(context.Background(), func(ps handler.Handler_handle_Params) error {
+		ps.SetRequest(payload.Message)
+		return nil
+	})
+	defer release()
+
+	// Wait for repsonse
+	res, err := future.Struct()
+	if err != nil {
+		panic(err)
+	}
+
+	// Re-marshall
+	resp, err := res.Response()
+	fmt.Println("Received response: " + resp)
+	payload.Message = resp
+	responsePayload, err := json.Marshal(payload)
+
+	writer.Header().Set("Content-Type", "application/json")
+	writer.Write(responsePayload)
+}
+
+func gatewayHandlerWrapper(ch csp.Chan, c *cli.Context, n *server.Node) func(http.ResponseWriter, *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		gatewayHandler(ch, c, n, writer, request)
+	}
+}
+
 func runGateway(c *cli.Context, n *server.Node) error {
 	fmt.Println("Gateway booting up...")
 	time.Sleep(5 * time.Second)
@@ -129,82 +186,9 @@ func runGateway(c *cli.Context, n *server.Node) error {
 	var ch = csp.NewChan(&csp.SyncChan{})
 	n.Vat.Export(chanCap, chanProvider{ch}) // Sets location to "/lb/chan"
 
-	var err error
-	for err == nil {
-		f, release := ch.Recv(context.Background())
-		defer release()
-
-		// TODO: uncomment to go from: Ptr => Client
-		// ptr, err := f.Ptr()
-		// if err != nil {
-		// 	return err
-		// }
-		// client := ptr.Interface().Client()
-		// a := handler.Handler(client)
-		// val := // TODO: Go from http request => Value
-		// a.Handle(context.Background(), val)
-
-		got, err := f.Text()
-
-		if err != nil {
-			return err
-		}
-		logger.Info("We have received value: " + got + " from the channel!")
-		time.Sleep(time.Second)
-	}
-	// TODO: Uncomment later when want to add in http server functionality
-	// logger.Info("starting server, listening on port :8080")
-
-	// http.HandleFunc("/echo", EchoHandler)
-	// http.HandleFunc("/slight-echo", SlightEchoHandler)
-
-	//return http.ListenAndServe(":8080", nil) // Can test with: curl -X GET -H "Content-Type: application/json" -d '{"message": "Hello, World!"}' http://localhost:8080/slight-echo
-	// time.Sleep(10 * time.Second)
-	return err
-}
-
-// EchoHandler echos back the request as a response
-// From https://github.com/aautar/go-http-echo/blob/master/echo.go#L21-L40
-func EchoHandler(writer http.ResponseWriter, request *http.Request) {
-
-	logger.Info("Echoing back request made to " + request.URL.Path + " to client (" + request.RemoteAddr + ")")
-
-	// allow pre-flight headers
-	writer.Header().Set("Access-Control-Allow-Headers", "Content-Range, Content-Disposition, Content-Type, ETag")
-
-	request.Write(writer)
-}
-
-type Payload struct {
-	Message string `json:"message"`
-}
-
-func SlightEchoHandler(writer http.ResponseWriter, request *http.Request) {
-	log.Info("Slightly echoing back request made to " + request.URL.Path + " to client (" + request.RemoteAddr + ")")
-
-	var payload Payload
-
-	err := json.NewDecoder(request.Body).Decode(&payload)
-	if err != nil {
-		http.Error(writer, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	if payload.Message == "" {
-		http.Error(writer, "message field not found or not a string", http.StatusBadRequest)
-		return
-	}
-
-	payload.Message = payload.Message + " You have been echoed!"
-
-	responsePayload, err := json.Marshal(payload)
-	if err != nil {
-		http.Error(writer, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	writer.Header().Set("Content-Type", "application/json")
-	writer.Write(responsePayload)
+	// run server
+	http.HandleFunc("/echo", gatewayHandlerWrapper(ch, c, n))
+	return http.ListenAndServe(":8080", nil)
 }
 
 func runWorker(c *cli.Context, n *server.Node, g peer.ID) error {
@@ -224,16 +208,24 @@ func runWorker(c *cli.Context, n *server.Node, g peer.ID) error {
 	a := csp.Chan(conn.Bootstrap(c.Context))
 
 	// Busy loop sending request handler capabilities
-	for err == nil {
-		msg := "hello, from " + n.Vat.Host.ID()
-		logger.Info("Putting msg: " + msg + " into the channel!")
-		err = a.Send(context.Background(), csp.Text(msg)) // TODO: `func(ps echo.Echo_send_Params` formatting for when want multiple params?
+	counter := 0
+	for counter < 10 && err == nil {
+
+		// Create capability
+		server := handler.HandlerServer{}
+		client := capnp.Client(handler.Handler_ServerToClient(server))
+
+		// Turn capability into pointer + Send pointer through channel
+		ptr := csp.Client(client)
+		logger.Info("Worker sending capability to channel")
+		err = a.Send(context.Background(), ptr)
 
 		if err != nil {
 			return err
 		}
 		logger.Info("Msg success")
 		time.Sleep(time.Second)
+		counter++
 	}
 
 	return err
