@@ -9,7 +9,7 @@ require (
 	github.com/stretchr/testify v1.8.2
 	github.com/urfave/cli/v2 v2.25.1
 	github.com/wetware/casm v0.0.0-20230410223030-669726c25fe7
-	github.com/wetware/ww v0.0.1-beta.30.0.20230416182702-0fd1498df5b8
+	github.com/wetware/ww v0.0.1-beta.30.0.20230420023151-db6d208713b3
 	go.uber.org/fx v1.19.2
 )
 
