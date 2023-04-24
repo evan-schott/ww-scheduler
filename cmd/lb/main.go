@@ -180,11 +180,6 @@ func runWorker(c *cli.Context, n *server.Node) error {
 	log := logger.With(&addr)
 	log.Info("worker started")
 
-	// TODO:  replace this with actual setup of the echo capability.
-	// You'll need to start an echo server, and derive a client from
-	// it.
-	var e lb.Echo
-
 	// Establish connection with gateway (corresponding to channel capability that gateway exported earlier)
 	conn, err := n.Vat.Connect(c.Context, addr, chanCap)
 	if err != nil {
@@ -198,6 +193,10 @@ func runWorker(c *cli.Context, n *server.Node) error {
 
 	// Loop until the worker starts shutting down.
 	for c.Context.Done() == nil {
+		// Setup of the echo capability. Start an echo server, and derive a client from it.
+		server := lb.EchoServer{}
+		e := capnp.Client(lb.Echo_ServerToClient(server))
+
 		// Block until we're able to send our echo capability to the
 		// gateway server.  This is where the load-balancing happens.
 		// We are competing with other Send()s, and the gateway will
