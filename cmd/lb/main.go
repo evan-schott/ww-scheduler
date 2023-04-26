@@ -49,7 +49,8 @@ var flags = []cli.Flag{
 		Name:    "discover",
 		Aliases: []string{"d"},
 		Usage:   "bootstrap discovery multiaddr",
-		Value:   "/ip4/228.8.8.8/udp/8822/multicast/lo0", // VPN:
+		Value:   "/ip4/239.0.0.1/udp/12345/multicast/eth0",
+		//Value:   "/ip4/228.8.8.8/udp/8822/multicast/lo0", // TODO: change to loopback to run locally  "/ip4/228.8.8.8/udp/8822/multicast/lo0"
 		EnvVars: []string{"WW_DISCOVER"},
 	},
 	&cli.StringSliceFlag{
@@ -138,6 +139,7 @@ func runGateway(c *cli.Context, n *server.Node) error {
 		echo := lb.Echo(f.Client())
 
 		// Call the handler's RPC method
+		logger.Info("Calling echo method on worker capability")
 		e, release := echo.Echo(r.Context(), lb.Data(b))
 		defer release()
 
@@ -149,6 +151,7 @@ func runGateway(c *cli.Context, n *server.Node) error {
 		}
 
 		// Grab the echoed bytes from the response
+		logger.Info("Received response from worker")
 		p, err := res.Response()
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
@@ -202,6 +205,7 @@ func runWorker(c *cli.Context, n *server.Node) error {
 		// We are competing with other Send()s, and the gateway will
 		// pick one of the senders at random each time it handles an
 		// HTTP request.
+		logger.Info("Sending capability down gateway channel")
 		err := ch.Send(context.Background(), csp.Client(e))
 		if err != nil {
 			return err // this generally means the gateway is down

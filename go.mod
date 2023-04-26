@@ -151,4 +151,4 @@ require (
 	zenhack.net/go/util v0.0.0-20230414211804-99ae9bf14f02 // indirect
 )
 
-replace github.com/wetware/ww => /Users/evanschott/go/src/github.com/wetware/ww
+//replace github.com/wetware/ww => /Users/evanschott/go/src/github.com/wetware/ww
