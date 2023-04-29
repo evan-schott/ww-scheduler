@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"capnproto.org/go/capnp/v3"
+	//worker "github.com/evan-schott/ww-scheduler/worker"
+	//"github.com/evan-schott/ww-scheduler/worker"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/lthibault/log"
 	"github.com/urfave/cli/v2"
@@ -19,8 +21,6 @@ import (
 	"github.com/wetware/ww/pkg/runtime"
 	"github.com/wetware/ww/pkg/server"
 	"go.uber.org/fx"
-
-	lb "github.com/evan-schott/ww-load-balancer"
 )
 
 // Used for cli.App()
@@ -82,6 +82,7 @@ type Task struct {
 	Start       int    `json:"start"`
 	Delay       int    `json:"delay"`
 	Repeats     int    `json:"repeats"`
+	Wasm        []byte `json:"wasm"`
 }
 
 var tasks = struct {
@@ -241,22 +242,21 @@ func runWorker(c *cli.Context, n *server.Node) error {
 	// only channel, to avoid mistakes.
 	ch := csp.Sender(conn.Bootstrap(c.Context))
 
-	// Loop until the worker starts shutting down.
-	for c.Context.Done() == nil {
-		// Setup of the echo capability. Start an echo server, and derive a client from it.
-		server := lb.EchoServer{}
-		e := capnp.Client(lb.Echo_ServerToClient(server))
+	// // Loop until the worker starts shutting down.
+	// for c.Context.Done() == nil {
+	// 	Setup of the worker capability. Start a worker server, and derive a client from it.
+	server := worker.Worker_Server{}
+	e := capnp.Client(worker.Worker_ServerToClient(server))
 
-		// Block until we're able to send our echo capability to the
-		// gateway server.  This is where the load-balancing happens.
-		// We are competing with other Send()s, and the gateway will
-		// pick one of the senders at random each time it handles an
-		// HTTP request.
-		logger.Info("Sending capability down gateway channel")
-		err := ch.Send(context.Background(), csp.Client(e))
-		if err != nil {
-			return err // this generally means the gateway is down
-		}
+	// Block until we're able to send our echo capability to the
+	// gateway server.  This is where the load-balancing happens.
+	// We are competing with other Send()s, and the gateway will
+	// pick one of the senders at random each time it handles an
+	// HTTP request.
+	logger.Info("Sending capability down gateway channel")
+	err = ch.Send(context.Background(), csp.Client(e))
+	if err != nil {
+		return err // this generally means the gateway is down
 	}
 
 	return nil

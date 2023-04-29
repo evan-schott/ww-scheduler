@@ -1,4 +1,4 @@
-module github.com/evan-schott/ww-load-balancer
+module github.com/evan-schott/ww-scheduler
 
 go 1.19
 
