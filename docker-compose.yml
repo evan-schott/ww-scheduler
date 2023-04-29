@@ -1,0 +1,44 @@
+version: '3'
+
+services:
+  container1:
+    image: alpine
+    command: /bin/sh -c "apk update && apk add socat && socat -u UDP4-RECVFROM:12345,ip-add-membership=239.0.0.1:0.0.0.0,fork,reuseaddr -"
+    container_name: container1
+    networks:
+      my_multicast_network:
+
+  container2:
+    image: ww-load-balancer
+    command: /bin/sh
+    tty: true
+    stdin_open: true
+    container_name: container2
+    networks:
+      my_multicast_network:
+    ports:
+      - "8080:8080"
+
+  container3:
+    image: ww-load-balancer
+    command: /bin/sh
+    tty: true
+    stdin_open: true
+    container_name: container3
+    networks:
+      my_multicast_network:
+
+  container4:
+    image: ww-load-balancer
+    command: /bin/sh
+    tty: true
+    stdin_open: true
+    container_name: container4
+    networks:
+      my_multicast_network:
+
+networks:
+  my_multicast_network:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "true"

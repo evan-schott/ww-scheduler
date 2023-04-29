@@ -2,17 +2,14 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
 	"sort"
-	"strings"
 	"time"
 
 	"capnproto.org/go/capnp/v3"
-	"github.com/evan-schott/ww-load-balancer/handler"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/lthibault/log"
 	"github.com/urfave/cli/v2"
@@ -62,7 +59,7 @@ var flags = []cli.Flag{
 	&cli.IntFlag{
 		Name:  "num-peers",
 		Usage: "number of expected peers in the cluster",
-		Value: 10,
+		Value: 2,
 	},
 	// &cli.IntFlag{ // TODO: Probably remove this once done debugging
 	// 	Name:  "role",
@@ -124,13 +121,6 @@ func run(c *cli.Context) error {
 	return runWorker(c, n, gateway)
 }
 
-type Payload struct {
-	Message string            `json:"message"`
-	Status  int               `json:"status"`
-	Headers map[string]string `json:"headers"`
-	Body    string            `json:"body"`
-}
-
 func gatewayHandler(ch csp.Chan, c *cli.Context, n *server.Node, writer http.ResponseWriter, request *http.Request) {
 
 	// Receive value from synchronous channel
@@ -144,19 +134,17 @@ func gatewayHandler(ch csp.Chan, c *cli.Context, n *server.Node, writer http.Res
 	}
 
 	// Recover capability from client
-	a := handler.Handler(ptr.Interface().Client())
+	a := Echo(ptr.Interface().Client())
 
-	// Decode object
-	var payload Payload
-	err = json.NewDecoder(request.Body).Decode(&payload)
+	// Convert to raw bytes
+	b, err := io.ReadAll(request.Body)
 	if err != nil {
-		http.Error(writer, err.Error(), http.StatusBadRequest)
-		return
+		panic(err)
 	}
 
 	// Call capability with <request body>
-	future, release := a.Handle(context.Background(), func(ps handler.Handler_handle_Params) error {
-		ps.SetRequest(payload.Message)
+	future, release := a.Echo(context.Background(), func(ps Echo_echo_Params) error {
+		ps.SetPayload(b)
 		return nil
 	})
 	defer release()
@@ -167,28 +155,8 @@ func gatewayHandler(ch csp.Chan, c *cli.Context, n *server.Node, writer http.Res
 		panic(err)
 	}
 
-	// Re-marshall
-	resp, err := res.Response()
-	fmt.Println("Received response: " + resp)
-	payload.Message = resp
-
-	// Add some more parts
-	bodyBytes, err := ioutil.ReadAll(request.Body)
-	if err != nil {
-		http.Error(writer, err.Error(), http.StatusBadRequest)
-		return
-	}
-	payload.Status = http.StatusOK
-	payload.Headers = make(map[string]string)
-	for key, values := range request.Header {
-		payload.Headers[key] = strings.Join(values, ",")
-	}
-	payload.Body = string(bodyBytes)
-
-	responsePayload, err := json.Marshal(payload)
-
 	writer.Header().Set("Content-Type", "application/json")
-	writer.Write(responsePayload)
+	writer.Write(res.Segment().Data()) // TODO: Check this output if we have a bug
 }
 
 func gatewayHandlerWrapper(ch csp.Chan, c *cli.Context, n *server.Node) func(http.ResponseWriter, *http.Request) {
@@ -230,8 +198,8 @@ func runWorker(c *cli.Context, n *server.Node, g peer.ID) error {
 	for counter < 10 && err == nil {
 
 		// Create capability
-		server := handler.HandlerServer{}
-		client := capnp.Client(handler.Handler_ServerToClient(server))
+		server := EchoServer{}
+		client := capnp.Client(Echo_ServerToClient(server))
 
 		// Turn capability into pointer + Send pointer through channel
 		ptr := csp.Client(client)
