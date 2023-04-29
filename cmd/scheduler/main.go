@@ -77,8 +77,11 @@ var (
 type Task struct {
 	ID          string `json:"id"`
 	Description string `json:"description"`
-	Completed   string `json:"complete"`
-	Schedule    string `json:"schedule"`
+	Completions int    `json:"complete"`
+	Duration    int    `json:"duration"`
+	Start       int    `json:"start"`
+	Delay       int    `json:"delay"`
+	Repeats     int    `json:"repeats"`
 }
 
 var tasks = struct {
@@ -163,6 +166,38 @@ func runGateway(c *cli.Context, n *server.Node) error {
 			tasks.Lock()
 			tasks.m[task.ID] = task
 			tasks.Unlock()
+
+			go func() {
+				// Function to execute the task
+				executeTask := func() {
+					log.Infof("Starting task: %s", task.Description)
+					time.Sleep(time.Duration(task.Duration) * time.Second)
+					log.Infof("Task completed: %s", task.Description)
+
+					// Update the Completions field after each successful execution
+					tasks.Lock()
+					task.Completions++
+					tasks.m[task.ID] = task
+					tasks.Unlock()
+				}
+
+				timer := time.NewTimer(time.Duration(task.Start) * time.Second)
+				<-timer.C
+
+				if task.Repeats > 1 && task.Delay > 0 {
+					ticker := time.NewTicker(time.Duration(task.Delay) * time.Second)
+					defer ticker.Stop()
+
+					for i := 0; i < task.Repeats; i++ {
+						executeTask()
+						if i < task.Repeats-1 {
+							<-ticker.C
+						}
+					}
+				} else {
+					executeTask()
+				}
+			}()
 
 			w.WriteHeader(http.StatusCreated)
 			w.Header().Set("Content-Type", "application/json")
