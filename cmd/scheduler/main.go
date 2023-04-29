@@ -122,7 +122,6 @@ func run(c *cli.Context) error {
 	return runWorker(c, n)
 }
 
-// TODO: Review these lines
 func runGateway(c *cli.Context, n *server.Node) error {
 	log := logger.With(n)
 	log.Info("gateway started")
