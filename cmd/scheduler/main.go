@@ -1,11 +1,12 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"io"
+	"encoding/json"
+	"io/ioutil"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"capnproto.org/go/capnp/v3"
@@ -49,8 +50,8 @@ var flags = []cli.Flag{
 		Name:    "discover",
 		Aliases: []string{"d"},
 		Usage:   "bootstrap discovery multiaddr",
-		Value:   "/ip4/239.0.0.1/udp/12345/multicast/eth0",
-		//Value:   "/ip4/228.8.8.8/udp/8822/multicast/lo0", // TODO: change to loopback to run locally  "/ip4/228.8.8.8/udp/8822/multicast/lo0"
+		//Value:   "/ip4/239.0.0.1/udp/12345/multicast/eth0",
+		Value:   "/ip4/228.8.8.8/udp/8822/multicast/lo0", // TODO: change to loopback to run locally  "/ip4/228.8.8.8/udp/8822/multicast/lo0"
 		EnvVars: []string{"WW_DISCOVER"},
 	},
 	&cli.StringSliceFlag{
@@ -72,6 +73,18 @@ var (
 	logger log.Logger
 	n      *server.Node
 )
+
+type Task struct {
+	ID          string `json:"id"`
+	Description string `json:"description"`
+	Completed   string `json:"complete"`
+	Schedule    string `json:"schedule"`
+}
+
+var tasks = struct {
+	sync.RWMutex
+	m map[string]Task
+}{m: make(map[string]Task)}
 
 func main() {
 	app := createApp()
@@ -99,8 +112,6 @@ func run(c *cli.Context) error {
 	}
 	defer app.Stop(context.Background())
 
-	logger.Info("server started")
-
 	if c.Bool("gateway") {
 		return runGateway(c, n)
 	}
@@ -119,52 +130,53 @@ func runGateway(c *cli.Context, n *server.Node) error {
 
 	log.Info("exported channel")
 
-	return http.ListenAndServe(":8080", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// each HTTP request is served in its own goroutine
+	http.HandleFunc("/tasks", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			log.Info("Serving GET request")
+			tasks.RLock()
+			defer tasks.RUnlock()
 
-		// Get the request payload
-		b, err := io.ReadAll(r.Body)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			var taskList []Task
+			for _, task := range tasks.m {
+				taskList = append(taskList, task)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(taskList)
+
+		case http.MethodPost:
+			log.Info("Serving POST request")
+			body, err := ioutil.ReadAll(r.Body)
+			if err != nil {
+				http.Error(w, "Error reading request body", http.StatusInternalServerError)
+				return
+			}
+			defer r.Body.Close()
+
+			var task Task
+			err = json.Unmarshal(body, &task)
+			if err != nil {
+				http.Error(w, "Error parsing JSON request body", http.StatusBadRequest)
+				return
+			}
+
+			tasks.Lock()
+			tasks.m[task.ID] = task
+			tasks.Unlock()
+
+			w.WriteHeader(http.StatusCreated)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(task)
+
+		default:
+			http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
 		}
 
-		// Block on <-ch until either we get a result, or the request
-		// context expires.  In the latter case, this indicates that
-		// the client aborted.
-		f, release := ch.Recv(r.Context())
-		defer release()
-
-		// Get the worker's echo capability
-		echo := lb.Echo(f.Client())
-
-		// Call the handler's RPC method
-		logger.Info("Calling echo method on worker capability")
-		e, release := echo.Echo(r.Context(), lb.Data(b))
-		defer release()
-
-		// block until we get the RPC response
-		res, err := e.Struct()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
-		}
-
-		// Grab the echoed bytes from the response
-		logger.Info("Received response from worker")
-		p, err := res.Response()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
-		}
-
-		// Send the response back to the caller
-		_, err = io.Copy(w, bytes.NewReader(p))
-		if err != nil {
-			log.WithError(err).
-				Warn("failed to write echo response")
-		}
 	}))
+
+	log.Info("starting server on port 8080")
+
+	return http.ListenAndServe(":8080", nil)
 }
 
 func runWorker(c *cli.Context, n *server.Node) error {
