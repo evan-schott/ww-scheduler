@@ -14,25 +14,12 @@ func (WorkerServer) Assign(ctx context.Context, call Worker_assign) error {
 	}
 
 	time.Sleep(2 * time.Second)
+
 	// Set the response to just echo the input message
-	// msg, err := call.Args().Wasm()
-	// if err != nil {
-	// 	return err
-	// }
-
-	// // Decode object
-	// var payload Payload
-	// reader := bytes.NewReader(msg)
-	// err = json.NewDecoder(reader).Decode(&payload)
-	// if err != nil {
-	// 	return err
-	// }
-
-	// payload.Message = payload.Message + " You have been echoed by worker!"
-	// payload.Status = http.StatusOK
-	// // payload.Headers = make(map[string]string)
-	// // payload.Headers["Content-Type"] = "application/json"
-	// responsePayload, err := json.Marshal(payload)
+	_, err = call.Args().Wasm()
+	if err != nil {
+		return err
+	}
 
 	return res.SetResult("Ok")
 }

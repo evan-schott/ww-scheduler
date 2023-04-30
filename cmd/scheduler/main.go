@@ -95,6 +95,7 @@ type WorkerTuple struct {
 	id          int
 	connections int
 	cap         worker.Worker
+	release     capnp.ReleaseFunc
 }
 
 type WorkerMap struct {
@@ -139,6 +140,14 @@ func run(c *cli.Context) error {
 	return runWorker(c, n)
 }
 
+func atoiOrZero(s string) int {
+	value, err := strconv.Atoi(s)
+	if err != nil {
+		return 0
+	}
+	return value
+}
+
 func runGateway(c *cli.Context, n *server.Node) error {
 	log := logger.With(n)
 	log.Info("gateway started")
@@ -159,14 +168,14 @@ func runGateway(c *cli.Context, n *server.Node) error {
 
 			// Block on <-ch until we get a result
 			f, release := ch.Recv(c.Context)
-			defer release()
+			<-f.Done()
 
 			// Get capability
 			w := worker.Worker(f.Client())
 			log.Info("Found new worker!")
 
 			// Create tuple to insert into mapping
-			workerTuple := &WorkerTuple{id: int(rand.Int63()), connections: 0, cap: w}
+			workerTuple := &WorkerTuple{id: int(rand.Int63()), connections: 0, cap: w, release: release}
 			workerMap.mu.Lock()
 			workerMap.mapping[workerTuple.id] = workerTuple
 			workerMap.mu.Unlock()
@@ -191,20 +200,34 @@ func runGateway(c *cli.Context, n *server.Node) error {
 
 		case http.MethodPost:
 			log.Info("Serving POST request")
-			body, err := ioutil.ReadAll(r.Body)
+			err := r.ParseMultipartForm(32 << 20) // 32 MB max memory
 			if err != nil {
-				http.Error(w, "Error reading request body", http.StatusInternalServerError)
-				return
-			}
-			defer r.Body.Close()
-
-			var task Task
-			err = json.Unmarshal(body, &task)
-			if err != nil {
-				http.Error(w, "Error parsing JSON request body", http.StatusBadRequest)
+				http.Error(w, "Error parsing multipart form data", http.StatusBadRequest)
 				return
 			}
 
+			task := Task{
+				ID:          r.FormValue("id"),
+				Description: r.FormValue("description"),
+				Completions: atoiOrZero(r.FormValue("complete")),
+				Duration:    atoiOrZero(r.FormValue("duration")),
+				Start:       atoiOrZero(r.FormValue("start")),
+				Delay:       atoiOrZero(r.FormValue("delay")),
+				Repeats:     atoiOrZero(r.FormValue("repeats")),
+			}
+
+			wasmFile, _, err := r.FormFile("wasm")
+			if err != nil {
+				http.Error(w, "Error reading wasm file", http.StatusBadRequest)
+				return
+			}
+			defer wasmFile.Close()
+
+			task.Wasm, err = ioutil.ReadAll(wasmFile)
+			if err != nil {
+				http.Error(w, "Error reading wasm file", http.StatusInternalServerError)
+				return
+			}
 			tasks.Lock()
 			tasks.m[task.ID] = task
 			tasks.Unlock()
@@ -240,7 +263,10 @@ func runGateway(c *cli.Context, n *server.Node) error {
 						http.Error(w, err.Error(), http.StatusBadGateway)
 						return
 					}
-					logger.Info("We got response:" + res.String())
+
+					msg, err := res.Result()
+
+					logger.Info("We got response: " + msg)
 
 					// Update number of connections
 					workerMap.mu.Lock()
