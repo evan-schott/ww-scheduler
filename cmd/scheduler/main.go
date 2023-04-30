@@ -4,14 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"io/ioutil"
+	"math/rand"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
 	"capnproto.org/go/capnp/v3"
-	//worker "github.com/evan-schott/ww-scheduler/worker"
-	//"github.com/evan-schott/ww-scheduler/worker"
+	worker "github.com/evan-schott/ww-scheduler"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/lthibault/log"
 	"github.com/urfave/cli/v2"
@@ -90,6 +91,21 @@ var tasks = struct {
 	m map[string]Task
 }{m: make(map[string]Task)}
 
+type WorkerTuple struct {
+	id          int
+	connections int
+	cap         worker.Worker
+}
+
+type WorkerMap struct {
+	mapping map[int]*WorkerTuple
+	mu      sync.Mutex
+}
+
+var workerMap = &WorkerMap{
+	mapping: make(map[int]*WorkerTuple),
+}
+
 func main() {
 	app := createApp()
 
@@ -134,6 +150,31 @@ func runGateway(c *cli.Context, n *server.Node) error {
 
 	log.Info("exported channel")
 
+	// Launch go routine to receive from channel
+	go func() {
+		log.Info("starting go routine to listen for new workers trying to join")
+
+		// Loop until the gateway starts shutting down.
+		for c.Context.Done() == nil {
+
+			// Block on <-ch until we get a result
+			f, release := ch.Recv(c.Context)
+			defer release()
+
+			// Get capability
+			w := worker.Worker(f.Client())
+			log.Info("Found new worker!")
+
+			// Create tuple to insert into mapping
+			workerTuple := &WorkerTuple{id: int(rand.Int63()), connections: 0, cap: w}
+			workerMap.mu.Lock()
+			workerMap.mapping[workerTuple.id] = workerTuple
+			workerMap.mu.Unlock()
+
+			time.Sleep(2 * time.Second)
+		}
+	}()
+
 	http.HandleFunc("/tasks", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
@@ -171,9 +212,40 @@ func runGateway(c *cli.Context, n *server.Node) error {
 			go func() {
 				// Function to execute the task
 				executeTask := func() {
-					log.Infof("Starting task: %s", task.Description)
-					time.Sleep(time.Duration(task.Duration) * time.Second)
-					log.Infof("Task completed: %s", task.Description)
+					// log.Infof("Starting task: %s", task.Description)
+					// time.Sleep(time.Duration(task.Duration) * time.Second)
+					// log.Infof("Task completed: %s", task.Description)
+
+					// Get worker to execute task
+					if len(workerMap.mapping) == 0 {
+						// Handle the case when there's no worker available
+						logger.Error("No worker available")
+						return
+					}
+
+					// find smallest
+					workerMap.mu.Lock()
+					wTuple := findSmallestConnections()
+					workerMap.mapping[wTuple.id].connections += 1
+					workerMap.mu.Unlock()
+
+					// Use capability to execute task
+					logger.Info("Calling assign() method on worker #" + strconv.Itoa(wTuple.id) + " capability")
+					worker, release := wTuple.cap.Assign(c.Context, worker.Data([]byte{}))
+					defer release()
+
+					// block until we get the RPC response
+					res, err := worker.Struct()
+					if err != nil {
+						http.Error(w, err.Error(), http.StatusBadGateway)
+						return
+					}
+					logger.Info("We got response:" + res.String())
+
+					// Update number of connections
+					workerMap.mu.Lock()
+					workerMap.mapping[wTuple.id].connections -= 1
+					workerMap.mu.Unlock()
 
 					// Update the Completions field after each successful execution
 					tasks.Lock()
@@ -215,6 +287,23 @@ func runGateway(c *cli.Context, n *server.Node) error {
 	return http.ListenAndServe(":8080", nil)
 }
 
+// Assume holding the lock when going in
+func findSmallestConnections() *WorkerTuple {
+	var minConnections *WorkerTuple
+	firstIteration := true
+
+	for _, workerTuple := range workerMap.mapping {
+		if firstIteration {
+			minConnections = workerTuple
+			firstIteration = false
+		} else if workerTuple.connections < minConnections.connections {
+			minConnections = workerTuple
+		}
+	}
+
+	return minConnections
+}
+
 func runWorker(c *cli.Context, n *server.Node) error {
 	if err := waitGateway(c, n); err != nil {
 		return err
@@ -245,10 +334,10 @@ func runWorker(c *cli.Context, n *server.Node) error {
 	// // Loop until the worker starts shutting down.
 	// for c.Context.Done() == nil {
 	// 	Setup of the worker capability. Start a worker server, and derive a client from it.
-	server := worker.Worker_Server{}
+	server := worker.WorkerServer{}
 	e := capnp.Client(worker.Worker_ServerToClient(server))
 
-	// Block until we're able to send our echo capability to the
+	// Block until we're able to send our worker capability to the
 	// gateway server.  This is where the load-balancing happens.
 	// We are competing with other Send()s, and the gateway will
 	// pick one of the senders at random each time it handles an
@@ -258,6 +347,8 @@ func runWorker(c *cli.Context, n *server.Node) error {
 	if err != nil {
 		return err // this generally means the gateway is down
 	}
+
+	<-c.Done() // TODO: Do we need to do this?
 
 	return nil
 }

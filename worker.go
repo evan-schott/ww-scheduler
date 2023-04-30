@@ -7,7 +7,7 @@ import (
 
 type WorkerServer struct{}
 
-func (WorkerServer) Worker(ctx context.Context, call Worker_assign) error {
+func (WorkerServer) Assign(ctx context.Context, call Worker_assign) error {
 	res, err := call.AllocResults() // allocate the results struct
 	if err != nil {
 		return err
@@ -37,8 +37,8 @@ func (WorkerServer) Worker(ctx context.Context, call Worker_assign) error {
 	return res.SetResult("Ok")
 }
 
-// func Data(b []byte) func(Echo_echo_Params) error {
-// 	return func(call Echo_echo_Params) error {
-// 		return call.SetPayload(b)
-// 	}
-// }
+func Data(b []byte) func(Worker_assign_Params) error {
+	return func(call Worker_assign_Params) error {
+		return call.SetWasm(b)
+	}
+}
