@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"math/rand"
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -164,18 +166,17 @@ type TaskResponse struct {
 
 func runGateway(c *cli.Context, n *server.Node) error {
 	log := logger.With(n)
-	log.Info("gateway started")
+	log.Info("Gateway started")
 
 	ch := csp.NewChan(&csp.SyncChan{})
 	defer ch.Close(c.Context)
-
 	n.Vat.Export(chanCap, chanProvider{ch})
 
-	log.Info("exported channel")
+	fmt.Println("Exported channel")
 
 	// Launch go routine to receive from channel
 	go func() {
-		log.Info("starting go routine to listen for new workers trying to join")
+		fmt.Println("Starting go routine to listen for new workers trying to join")
 
 		// Loop until the gateway starts shutting down.
 		for c.Context.Done() == nil {
@@ -186,7 +187,6 @@ func runGateway(c *cli.Context, n *server.Node) error {
 
 			// Get capability
 			w := worker.Worker(f.Client())
-			log.Info("Found new worker!")
 
 			// Create tuple to insert into mapping
 			workerTuple := &WorkerTuple{id: int(rand.Int63()), connections: 0, cap: w, release: release}
@@ -194,14 +194,14 @@ func runGateway(c *cli.Context, n *server.Node) error {
 			workerMap.mapping[workerTuple.id] = workerTuple
 			workerMap.mu.Unlock()
 
-			time.Sleep(2 * time.Second)
+			fmt.Println("Found worker " + strconv.Itoa(workerTuple.id))
 		}
 	}()
 
 	http.HandleFunc("/tasks", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			log.Info("Serving GET request")
+			fmt.Println("Serving GET request")
 			tasks.RLock()
 			defer tasks.RUnlock()
 
@@ -223,7 +223,7 @@ func runGateway(c *cli.Context, n *server.Node) error {
 			json.NewEncoder(w).Encode(taskList)
 
 		case http.MethodPost:
-			log.Info("Serving POST request")
+			fmt.Println("Serving POST request")
 			err := r.ParseMultipartForm(32 << 20) // 32 MB max memory
 			if err != nil {
 				http.Error(w, "Error parsing multipart form data", http.StatusBadRequest)
@@ -276,7 +276,7 @@ func runGateway(c *cli.Context, n *server.Node) error {
 					workerMap.mu.Unlock()
 
 					// Use capability to execute task
-					logger.Info("Calling assign() method on worker #" + strconv.Itoa(wTuple.id) + " capability")
+					fmt.Printf("Calling assign(input:%d,difficulty:%d,wasm:hash.wasm) method on worker #%d\n", task.Input, task.Difficulty, wTuple.id)
 					worker, release := wTuple.cap.Assign(c.Context, func(ps worker.Worker_assign_Params) error {
 						ps.SetInput(int64(task.Input))
 						ps.SetDifficulty(int64(task.Difficulty))
@@ -294,7 +294,7 @@ func runGateway(c *cli.Context, n *server.Node) error {
 
 					msg, err := res.Result()
 
-					logger.Info("We got response: " + msg)
+					fmt.Printf("Got result:%s from worker #%d\n", msg, wTuple.id)
 
 					// Update number of connections
 					workerMap.mu.Lock()
@@ -316,7 +316,7 @@ func runGateway(c *cli.Context, n *server.Node) error {
 					defer ticker.Stop()
 
 					for i := 0; i < task.Repeats; i++ {
-						executeTask()
+						go executeTask()
 						if i < task.Repeats-1 {
 							<-ticker.C
 						}
@@ -326,9 +326,21 @@ func runGateway(c *cli.Context, n *server.Node) error {
 				}
 			}()
 
+			taskSend := Task{
+				ID:          r.FormValue("id"),
+				Description: r.FormValue("description"),
+				Completions: atoiOrZero(r.FormValue("complete")),
+				Duration:    atoiOrZero(r.FormValue("duration")),
+				Start:       atoiOrZero(r.FormValue("start")),
+				Delay:       atoiOrZero(r.FormValue("delay")),
+				Repeats:     atoiOrZero(r.FormValue("repeats")),
+				Input:       atoiOrZero(r.FormValue("input")),
+				Difficulty:  atoiOrZero(r.FormValue("difficulty")),
+			}
+
 			w.WriteHeader(http.StatusCreated)
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(task)
+			json.NewEncoder(w).Encode(taskSend)
 
 		default:
 			http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
@@ -336,17 +348,22 @@ func runGateway(c *cli.Context, n *server.Node) error {
 
 	}))
 
-	log.Info("starting server on port 8080")
+	fmt.Println("starting server on port 8080")
 
 	return http.ListenAndServe(":8080", nil)
 }
 
 // Assume holding the lock when going in
 func findSmallestConnections() *WorkerTuple {
+
 	var minConnections *WorkerTuple
 	firstIteration := true
+	var infoBuilder strings.Builder
 
-	for _, workerTuple := range workerMap.mapping {
+	for key, workerTuple := range workerMap.mapping {
+		// Append the key and connections field to the infoBuilder
+		infoBuilder.WriteString(fmt.Sprintf("{Id: %d, Connections: %d} ", key, workerTuple.connections))
+
 		if firstIteration {
 			minConnections = workerTuple
 			firstIteration = false
@@ -354,6 +371,9 @@ func findSmallestConnections() *WorkerTuple {
 			minConnections = workerTuple
 		}
 	}
+
+	// Print the information about keys and connections
+	fmt.Printf("Picked worker %d from %s\n", minConnections.id, infoBuilder.String())
 
 	return minConnections
 }
@@ -372,7 +392,7 @@ func runWorker(c *cli.Context, n *server.Node) error {
 	addr := peer.AddrInfo{ID: gateway}
 
 	log := logger.With(&addr)
-	log.Info("worker started")
+	log.Info("Worker started")
 
 	// Establish connection with gateway (corresponding to channel capability that gateway exported earlier)
 	conn, err := n.Vat.Connect(c.Context, addr, chanCap)
@@ -396,7 +416,7 @@ func runWorker(c *cli.Context, n *server.Node) error {
 	// We are competing with other Send()s, and the gateway will
 	// pick one of the senders at random each time it handles an
 	// HTTP request.
-	logger.Info("Sending capability down gateway channel")
+	fmt.Println("Sending capability down gateway channel")
 	err = ch.Send(context.Background(), csp.Client(e))
 	if err != nil {
 		return err // this generally means the gateway is down

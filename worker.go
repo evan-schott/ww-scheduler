@@ -28,7 +28,7 @@ func (WorkerServer) Assign(ctx context.Context, call Worker_assign) error {
 		return err
 	}
 
-	fmt.Printf("Input: %d, Difficulty: %d\n", input, diff)
+	fmt.Printf("Input: %d, Difficulty: %d => ", input, diff)
 
 	hashWasm, err := call.Args().Wasm()
 	if err != nil {
@@ -57,7 +57,7 @@ func (WorkerServer) Assign(ctx context.Context, call Worker_assign) error {
 
 	resStr := strconv.FormatUint(results[0], 10)
 
-	fmt.Println(resStr)
+	fmt.Printf("Result: %s\n", resStr)
 
 	return res.SetResult(resStr)
 }
