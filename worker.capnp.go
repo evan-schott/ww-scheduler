@@ -27,7 +27,7 @@ func (c Worker) Assign(ctx context.Context, params func(Worker_assign_Params) er
 		},
 	}
 	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.ArgsSize = capnp.ObjectSize{DataSize: 16, PointerCount: 1}
 		s.PlaceArgs = func(s capnp.Struct) error { return params(Worker_assign_Params(s)) }
 	}
 
@@ -178,12 +178,12 @@ type Worker_assign_Params capnp.Struct
 const Worker_assign_Params_TypeID = 0x8612f7506f622fbd
 
 func NewWorker_assign_Params(s *capnp.Segment) (Worker_assign_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1})
 	return Worker_assign_Params(st), err
 }
 
 func NewRootWorker_assign_Params(s *capnp.Segment) (Worker_assign_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1})
 	return Worker_assign_Params(st), err
 }
 
@@ -232,12 +232,28 @@ func (s Worker_assign_Params) SetWasm(v []byte) error {
 	return capnp.Struct(s).SetData(0, v)
 }
 
+func (s Worker_assign_Params) Input() int64 {
+	return int64(capnp.Struct(s).Uint64(0))
+}
+
+func (s Worker_assign_Params) SetInput(v int64) {
+	capnp.Struct(s).SetUint64(0, uint64(v))
+}
+
+func (s Worker_assign_Params) Difficulty() int64 {
+	return int64(capnp.Struct(s).Uint64(8))
+}
+
+func (s Worker_assign_Params) SetDifficulty(v int64) {
+	capnp.Struct(s).SetUint64(8, uint64(v))
+}
+
 // Worker_assign_Params_List is a list of Worker_assign_Params.
 type Worker_assign_Params_List = capnp.StructList[Worker_assign_Params]
 
 // NewWorker_assign_Params creates a new list of Worker_assign_Params.
 func NewWorker_assign_Params_List(s *capnp.Segment, sz int32) (Worker_assign_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1}, sz)
 	return capnp.StructList[Worker_assign_Params](l), err
 }
 
@@ -331,23 +347,27 @@ func (f Worker_assign_Results_Future) Struct() (Worker_assign_Results, error) {
 	return Worker_assign_Results(p.Struct()), err
 }
 
-const schema_95c0f3edf8dd266c = "x\xda\x12\xe8u`1\xe4\xcdgb`\x0a\x94ae" +
-	"\xfb\xbfW?)?\xe0\xbbP\x1b\x83\xa0\x08#\x03\x03" +
-	"+#;\x03\x83\xb1,\xa3\x10#\x03\xa3\xb0*\xa3=" +
-	"\x03\xe3\xff\xc4T\xc7\xea\xbeyk7!+pe\x94" +
-	"\x02)\xf0\x05+\xf8\xf9`\xb1\xbd\xb7\xe2\xfb#\x0c\x82" +
-	"\xbc\xcc\xffs\xd4\xee\xfex\xfb\xf9\xc0T\x06\x06F\xe1" +
-	"\\\xc6E\xc2\xa5 \xf5\xc2\x85\x8c\xee\xc23\x19\xd9\x19" +
-	"t\xfe\x97\xe7\x17e\xa7\x16\xe9%3'\x16\xe4\x15X" +
-	"\x85Cx\x89\xc5\xc5\x99\xe9y*\x01\x89E\x89\xb9\x8c" +
-	"\xc5\x81,\xcc,\x0c\x0c,\x8c\x0c\x0c\x82\xbcZ\x0c\x0c" +
-	"\x81\x1c\xcc\x8c\x81\"L\x8c\xfc\xe5\x89\xc5\xb9\x8c\xbc\x0c" +
-	"L\x8c\xbc\x0c\x8cx\xcd\x09J-.\xcda.A1" +
-	"\xc8\x0aa\x90}\x11H\xbe\x84\x91\x87\x81\x89\x91\x07\xc9" +
-	"(F\x98Q\xec\xd9\xa9E\x01\x8c\x8c\x81,\xcc\xac\x0c" +
-	"\x0c\xf0\x00b\x84\x05\x84\xa0\xa0\x15\x03\x93 +\xbb=" +
-	"\xc4:\x07\xc6\x00FF@\x00\x00\x00\xff\xff\x00zW" +
-	"\xd5"
+const schema_95c0f3edf8dd266c = "x\xda|\x90\xbfK\xe4@\x1c\xc5\xdf\x9bI.Wl" +
+	"\xb8\x9bM\xae9\xee8\x0e\xee,D\x14\xb5\xdb&+" +
+	"(\"\xae\x90\xb1Q\xec\xe2\x9a\x95\xb0?I\xb2,b" +
+	"oigk\xa1\xad\"\xd8\x0b\x0a6\xfe\x11\x82\xad\xc5" +
+	"\"b\xa1V\x91\xb8\xecbe9o>\xbc\xef\x87\xf7" +
+	"\xfd\xa4lL\xdbm\x01\xa1\x7f\x99_\xb2\x8b\xa9\xcd\xb6" +
+	"\xff\\\xdc\x83v)\x00\x93\x160\xfb\x9bE\x82\xce\x7f" +
+	"\x9e\x81Y\x10\xce\xed\xee\x1f\x9e\x9eC\xb9\x1c\x02W\xfc" +
+	"\x99\x037\xf4\xc0\xec\xf5\xee\xd8[\xfe\xfbp\x0de\xcb" +
+	"\xac1v\xfb\xd2\x7f\xba<\x00\xe8\xdc\xf3\xc8y\xccy" +
+	"\xa7\xcfE\xe7\x87\xb00\x91\xf5\xdaq=\x8c'\xab2" +
+	"\xe8\xb4:\xa5\xb5\xc1+H\x92h\xbb\xf5\xcf\x0f\xe2\xa0" +
+	"\xc9D\x17\xa4\x01\x18\x04\xd4\xc28\xa0\xcb\x92\xba\"H" +
+	"\xba\xcc\xb3\xa5\x19@\xcfKj_P\x09\xbek\xab\x95" +
+	"\x0d@W$\xf5\xba\xe0\xb7^\x904iC\xd0\x06\xff" +
+	"D\xadN7\xa5\x09A\x13\xcc\xb6\xa2Z-\xaav\x1b" +
+	"\x90\xe9\xce(\xfc\xcci5L\xba\x0d\x99&\xda\x18I" +
+	"\xd9%@\x7f\x95\xd4\xae\xa0\x17\xe7\xff)\x0b\x10,|" +
+	"\xa8\xe2\xb0\xca\xaa\x87\xb1OjC\x9a\xc0hm\x0eG" +
+	"U\xaa\x04\xa1L\xcb\x1b\x9c+\xd3'\xdf\x02\x00\x00\xff" +
+	"\xffWUf\xf2"
 
 func RegisterSchema(reg *schemas.Registry) {
 	reg.Register(&schemas.Schema{

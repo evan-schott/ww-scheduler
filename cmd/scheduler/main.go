@@ -84,6 +84,8 @@ type Task struct {
 	Delay       int    `json:"delay"`
 	Repeats     int    `json:"repeats"`
 	Wasm        []byte `json:"wasm"`
+	Input       int    `json:"input"`
+	Difficulty  int    `json:"difficulty"`
 }
 
 var tasks = struct {
@@ -148,6 +150,18 @@ func atoiOrZero(s string) int {
 	return value
 }
 
+type TaskResponse struct {
+	ID          string `json:"id"`
+	Description string `json:"description"`
+	Completions int    `json:"completions"`
+	Duration    int    `json:"duration"`
+	Start       int    `json:"start"`
+	Delay       int    `json:"delay"`
+	Repeats     int    `json:"repeats"`
+	Input       int    `json:"input"`
+	Difficulty  int    `json:"difficulty"`
+}
+
 func runGateway(c *cli.Context, n *server.Node) error {
 	log := logger.With(n)
 	log.Info("gateway started")
@@ -191,9 +205,19 @@ func runGateway(c *cli.Context, n *server.Node) error {
 			tasks.RLock()
 			defer tasks.RUnlock()
 
-			var taskList []Task
+			var taskList []TaskResponse
 			for _, task := range tasks.m {
-				taskList = append(taskList, task)
+				taskList = append(taskList, TaskResponse{
+					ID:          task.ID,
+					Description: task.Description,
+					Completions: task.Completions,
+					Duration:    task.Duration,
+					Start:       task.Start,
+					Delay:       task.Delay,
+					Repeats:     task.Repeats,
+					Input:       task.Input,
+					Difficulty:  task.Difficulty,
+				})
 			}
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(taskList)
@@ -214,6 +238,8 @@ func runGateway(c *cli.Context, n *server.Node) error {
 				Start:       atoiOrZero(r.FormValue("start")),
 				Delay:       atoiOrZero(r.FormValue("delay")),
 				Repeats:     atoiOrZero(r.FormValue("repeats")),
+				Input:       atoiOrZero(r.FormValue("input")),
+				Difficulty:  atoiOrZero(r.FormValue("difficulty")),
 			}
 
 			wasmFile, _, err := r.FormFile("wasm")
@@ -235,9 +261,6 @@ func runGateway(c *cli.Context, n *server.Node) error {
 			go func() {
 				// Function to execute the task
 				executeTask := func() {
-					// log.Infof("Starting task: %s", task.Description)
-					// time.Sleep(time.Duration(task.Duration) * time.Second)
-					// log.Infof("Task completed: %s", task.Description)
 
 					// Get worker to execute task
 					if len(workerMap.mapping) == 0 {
@@ -254,7 +277,12 @@ func runGateway(c *cli.Context, n *server.Node) error {
 
 					// Use capability to execute task
 					logger.Info("Calling assign() method on worker #" + strconv.Itoa(wTuple.id) + " capability")
-					worker, release := wTuple.cap.Assign(c.Context, worker.Data([]byte{}))
+					worker, release := wTuple.cap.Assign(c.Context, func(ps worker.Worker_assign_Params) error {
+						ps.SetInput(int64(task.Input))
+						ps.SetDifficulty(int64(task.Difficulty))
+						ps.SetWasm(task.Wasm)
+						return nil
+					})
 					defer release()
 
 					// block until we get the RPC response
