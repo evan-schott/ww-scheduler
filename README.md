@@ -59,7 +59,9 @@ A node joins the wetware cluster by bootstrapping to a peer in the network. This
   size:      217 bytes
   peer:      12D3KooWQdc1sHWeBqbWuCPZEG5gjLy4tWrc8ppKYTRAMq4upeTP
 ```
+
 </details>
+
 
 ## 2. Capabilities
 Capabilities are fundamental to the access control model of Wetware. A process must own a capability from another process in order to call RPCs. Capabilities can be broadcasted  as demonstrated with:
