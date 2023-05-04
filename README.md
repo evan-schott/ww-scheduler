@@ -1,3 +1,5 @@
+
+
 # Introduction
 The purpose of the repository is to provide a working example of Wetware in action. This example involves setting up a cluster and having a scheduler node in the network assign jobs to worker nodes. The scheduler can be controlled by way of requests to the "http://localhost:8080/tasks" endpoint. Jobs can be arbitrary, as any program compiled to web assembly is acceptable as an input. 
 
@@ -19,6 +21,7 @@ TODO: add docker config instructions
 ## 1 Bootstrapping 
 A node joins the wetware cluster by bootstrapping to a peer in the network. This procedure involves sending and listening for discover packets in the multicast group specified in the header flags. In order to view all the packets you download [casm](https://github.com/wetware/casm)and run `casm cluster ls` . 
 <details><summary>Example Output</summary>
+
 ```
 [0000] Got multicast packet (171 byte)
   type:      survey
@@ -58,10 +61,10 @@ A node joins the wetware cluster by bootstrapping to a peer in the network. This
   namespace: ww
   size:      217 bytes
   peer:      12D3KooWQdc1sHWeBqbWuCPZEG5gjLy4tWrc8ppKYTRAMq4upeTP
-```
-
+  
+  ```
+  
 </details>
-
 
 ## 2. Capabilities
 Capabilities are fundamental to the access control model of Wetware. A process must own a capability from another process in order to call RPCs. Capabilities can be broadcasted  as demonstrated with:
