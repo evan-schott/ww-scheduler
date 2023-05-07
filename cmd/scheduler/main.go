@@ -26,7 +26,7 @@ import (
 	"go.uber.org/fx"
 )
 
-// Used for cli.App()
+// Flags used for cli.App()
 var flags = []cli.Flag{
 	&cli.StringFlag{
 		Name:    "ns",
@@ -77,6 +77,7 @@ var (
 	n      *server.Node
 )
 
+// Formatting of the REST api "/tasks"
 type Task struct {
 	ID          string `json:"id"`
 	Description string `json:"description"`
@@ -90,11 +91,13 @@ type Task struct {
 	Difficulty  int    `json:"difficulty"`
 }
 
+// Each task is protected by mutex to prevent concurrent access
 var tasks = struct {
 	sync.RWMutex
 	m map[string]Task
 }{m: make(map[string]Task)}
 
+// Representation of a worker in cluster
 type WorkerTuple struct {
 	id          int
 	connections int
@@ -102,6 +105,7 @@ type WorkerTuple struct {
 	release     capnp.ReleaseFunc
 }
 
+// Worker information is protected by mutex to prevent concurrent access
 type WorkerMap struct {
 	mapping map[int]*WorkerTuple
 	mu      sync.Mutex
@@ -137,6 +141,7 @@ func run(c *cli.Context) error {
 	}
 	defer app.Stop(context.Background())
 
+	// Command line argument to specify which is "gateway" and which is "worker"
 	if c.Bool("gateway") {
 		return runGateway(c, n)
 	}
@@ -144,14 +149,7 @@ func run(c *cli.Context) error {
 	return runWorker(c, n)
 }
 
-func atoiOrZero(s string) int {
-	value, err := strconv.Atoi(s)
-	if err != nil {
-		return 0
-	}
-	return value
-}
-
+// Abbreviated struct for responses
 type TaskResponse struct {
 	ID          string `json:"id"`
 	Description string `json:"description"`
@@ -164,31 +162,35 @@ type TaskResponse struct {
 	Difficulty  int    `json:"difficulty"`
 }
 
+// Core function for "gateway" node
 func runGateway(c *cli.Context, n *server.Node) error {
 	log := logger.With(n)
 	log.Info("Gateway started")
 
+	// Create synchronous channel server on Gateway server and export it
+	// Now any node on network can send to our channel server by using the channel capability
 	ch := csp.NewChan(&csp.SyncChan{})
 	defer ch.Close(c.Context)
 	n.Vat.Export(chanCap, chanProvider{ch})
 
 	fmt.Println("Exported channel")
 
-	// Launch go routine to receive from channel
+	// Launch go routine to receive new workers from channel
 	go func() {
 		fmt.Println("Starting go routine to listen for new workers trying to join")
 
-		// Loop until the gateway starts shutting down.
+		// Loop until the gateway starts shutting down
+		// This way we allow for dynamic worker set
 		for c.Context.Done() == nil {
 
-			// Block on <-ch until we get a result
+			// Block on channel until a new worker capability arrives
 			f, release := ch.Recv(c.Context)
 			<-f.Done()
 
 			// Get capability
 			w := worker.Worker(f.Client())
 
-			// Create tuple to insert into mapping
+			// Create new tuple to represent worker to insert into mapping
 			workerTuple := &WorkerTuple{id: int(rand.Int63()), connections: 0, cap: w, release: release}
 			workerMap.mu.Lock()
 			workerMap.mapping[workerTuple.id] = workerTuple
@@ -198,6 +200,7 @@ func runGateway(c *cli.Context, n *server.Node) error {
 		}
 	}()
 
+	// Function to handle requests to "/tasks" endpoint
 	http.HandleFunc("/tasks", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
@@ -242,6 +245,7 @@ func runGateway(c *cli.Context, n *server.Node) error {
 				Difficulty:  atoiOrZero(r.FormValue("difficulty")),
 			}
 
+			// Read wasm file
 			wasmFile, _, err := r.FormFile("wasm")
 			if err != nil {
 				http.Error(w, "Error reading wasm file", http.StatusBadRequest)
@@ -254,10 +258,13 @@ func runGateway(c *cli.Context, n *server.Node) error {
 				http.Error(w, "Error reading wasm file", http.StatusInternalServerError)
 				return
 			}
+
+			// Use locks to prevent concurrent request handling issues
 			tasks.Lock()
 			tasks.m[task.ID] = task
 			tasks.Unlock()
 
+			// Launch go routine to manage current task
 			go func() {
 				// Function to execute the task
 				executeTask := func() {
@@ -269,13 +276,14 @@ func runGateway(c *cli.Context, n *server.Node) error {
 						return
 					}
 
-					// find smallest
+					// Least connections heuristic for load balancing
 					workerMap.mu.Lock()
 					wTuple := findSmallestConnections()
 					workerMap.mapping[wTuple.id].connections += 1
 					workerMap.mu.Unlock()
 
-					// Use capability to execute task
+					// Use worker capability (must have received from channel earlier) to execute task
+					// This will make the worker run the wasm file, and send us the results
 					fmt.Printf("Calling assign(input:%d,difficulty:%d,wasm:hash.wasm) method on worker #%d\n", task.Input, task.Difficulty, wTuple.id)
 					worker, release := wTuple.cap.Assign(c.Context, func(ps worker.Worker_assign_Params) error {
 						ps.SetInput(int64(task.Input))
@@ -285,15 +293,20 @@ func runGateway(c *cli.Context, n *server.Node) error {
 					})
 					defer release()
 
-					// block until we get the RPC response
+					// Block until we get the RPC response
 					res, err := worker.Struct()
 					if err != nil {
+
+						// Remove workers that crash
+						fmt.Println("Worker crashed")
+						workerMap.mu.Lock()
+						delete(workerMap.mapping, wTuple.id)
+						workerMap.mu.Unlock()
 						http.Error(w, err.Error(), http.StatusBadGateway)
 						return
 					}
 
 					msg, err := res.Result()
-
 					fmt.Printf("Got result:%s from worker #%d\n", msg, wTuple.id)
 
 					// Update number of connections
@@ -308,9 +321,11 @@ func runGateway(c *cli.Context, n *server.Node) error {
 					tasks.Unlock()
 				}
 
+				// Delay as specified by request
 				timer := time.NewTimer(time.Duration(task.Start) * time.Second)
 				<-timer.C
 
+				// Repeat task at regular interval specified by request
 				if task.Repeats > 1 && task.Delay > 0 {
 					ticker := time.NewTicker(time.Duration(task.Delay) * time.Second)
 					defer ticker.Stop()
@@ -326,6 +341,7 @@ func runGateway(c *cli.Context, n *server.Node) error {
 				}
 			}()
 
+			// Return abbreviated struct
 			taskSend := Task{
 				ID:          r.FormValue("id"),
 				Description: r.FormValue("description"),
@@ -348,8 +364,8 @@ func runGateway(c *cli.Context, n *server.Node) error {
 
 	}))
 
+	// Start server to begin handling requests
 	fmt.Println("starting server on port 8080")
-
 	return http.ListenAndServe(":8080", nil)
 }
 
@@ -378,7 +394,19 @@ func findSmallestConnections() *WorkerTuple {
 	return minConnections
 }
 
+// Helper function for runGateway
+func atoiOrZero(s string) int {
+	value, err := strconv.Atoi(s)
+	if err != nil {
+		return 0
+	}
+	return value
+}
+
+// Main "worker" function
 func runWorker(c *cli.Context, n *server.Node) error {
+
+	// Wait until find gateway as peer in cluster
 	if err := waitGateway(c, n); err != nil {
 		return err
 	}
@@ -401,32 +429,25 @@ func runWorker(c *cli.Context, n *server.Node) error {
 	}
 	defer conn.Close()
 
-	// Recover channel capability from Gateway.  Cast it as a send-
-	// only channel, to avoid mistakes.
+	// Recover channel capability from Gateway.  Cast it as a send-only channel, to avoid mistakes.
 	ch := csp.Sender(conn.Bootstrap(c.Context))
 
-	// // Loop until the worker starts shutting down.
-	// for c.Context.Done() == nil {
 	// 	Setup of the worker capability. Start a worker server, and derive a client from it.
 	server := worker.WorkerServer{}
 	e := capnp.Client(worker.Worker_ServerToClient(server))
 
-	// Block until we're able to send our worker capability to the
-	// gateway server.  This is where the load-balancing happens.
-	// We are competing with other Send()s, and the gateway will
-	// pick one of the senders at random each time it handles an
-	// HTTP request.
 	fmt.Println("Sending capability down gateway channel")
 	err = ch.Send(context.Background(), csp.Client(e))
 	if err != nil {
 		return err // this generally means the gateway is down
 	}
 
-	<-c.Done() // TODO: Do we need to do this?
+	<-c.Done()
 
 	return nil
 }
 
+// Repeatedly query to see if gateway is peer in cluster
 func waitGateway(c *cli.Context, n *server.Node) error {
 	for {
 		ok, err := queryForGateway(c, n)
@@ -442,6 +463,7 @@ func waitGateway(c *cli.Context, n *server.Node) error {
 	}
 }
 
+// Iterate over all peers in cluster and see if one of them is gateway
 func queryForGateway(c *cli.Context, n *server.Node) (bool, error) {
 	it, release := n.View().Iter(c.Context, matchAll())
 	defer release()
