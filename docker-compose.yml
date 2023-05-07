@@ -9,7 +9,7 @@ services:
       my_multicast_network:
 
   container2:
-    image: ww-load-balancer
+    image: ww-scheduler
     command: /bin/sh
     tty: true
     stdin_open: true
@@ -20,7 +20,7 @@ services:
       - "8080:8080"
 
   container3:
-    image: ww-load-balancer
+    image: ww-scheduler
     command: /bin/sh
     tty: true
     stdin_open: true
@@ -29,7 +29,7 @@ services:
       my_multicast_network:
 
   container4:
-    image: ww-load-balancer
+    image: ww-scheduler
     command: /bin/sh
     tty: true
     stdin_open: true
