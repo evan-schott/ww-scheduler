@@ -15,7 +15,16 @@ go run cmd/scheduler/main.go --gateway true
 go run cmd/scheduler/main.go --dial [INSERT GATEWAY PEERID] 12D3KooWKggVqaYBwJvCCFNV8zNqCQS6rbSMKTafjmMBH2pZpZ8t
 ```
 # Running it with docker
-TODO: add docker config instructions
+```
+docker build -t ww-scheduler .
+docker compose up
+
+// In one shell to run gateway: (output will contain gateway peerID)
+go run cmd/scheduler/main.go --gateway true
+
+// In other shells to run workers
+go run cmd/scheduler/main.go --dial [INSERT GATEWAY PEERID] 12D3KooWKggVqaYBwJvCCFNV8zNqCQS6rbSMKTafjmMBH2pZpZ8t
+```
 
 # In more depth
 ## 1 Bootstrapping 
