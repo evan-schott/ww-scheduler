@@ -53,8 +53,7 @@ var flags = []cli.Flag{
 		Name:    "discover",
 		Aliases: []string{"d"},
 		Usage:   "bootstrap discovery multiaddr",
-		//Value:   "/ip4/239.0.0.1/udp/12345/multicast/eth0",
-		Value:   "/ip4/228.8.8.8/udp/8822/multicast/lo0", // TODO: change to loopback to run locally  "/ip4/228.8.8.8/udp/8822/multicast/lo0"
+		Value:   "/ip4/228.8.8.8/udp/8822/multicast/lo0", // TODO: Switch to "/ip4/239.0.0.1/udp/12345/multicast/eth0" in order to build docker image
 		EnvVars: []string{"WW_DISCOVER"},
 	},
 	&cli.StringSliceFlag{

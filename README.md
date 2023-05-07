@@ -197,13 +197,21 @@ curl -X GET http://localhost:8080/tasks
 
 
 # Running it with docker
+1. Switch from lo0 to eth0
+- Change `/ip4/228.8.8.8/udp/8822/multicast/lo0` to `/ip4/239.0.0.1/udp/12345/multicast/eth0` on line 57
+
+2. Build images and compose
 ```
 docker build -t ww-scheduler .
 docker compose up
+```
 
-// In one shell to run gateway: (output will contain gateway peerID)
+3. Jump in Gateway container
+```
 go run cmd/scheduler/main.go --gateway true
-
-// In other shells to run workers
+```
+4. Jump in Worker containers
+```
 go run cmd/scheduler/main.go --dial [INSERT GATEWAY PEERID] 
 ```
+5. Send curl requests as desired
