@@ -152,6 +152,5 @@ curl -X GET http://localhost:8080/tasks
 ```
 
 # In action
-- Link to video
-TODO: create video
+- Video showcase: https://www.youtube.com/watch?v=SwjcH1dP7fk
 
